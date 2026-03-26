@@ -9,9 +9,10 @@ Uses the Wayback Machine CDX API to discover URLs, then fetches
 the archived snapshots.
 
 Usage:
-    python python/wayback_recover.py --source old       # 1995-2006 content
-    python python/wayback_recover.py --source pipermail  # 2006-2021 content
-    python python/wayback_recover.py --source all        # Both
+    python python/wayback_recover.py discover                           # Find all URLs
+    python python/wayback_recover.py discover --source old              # Only pre-2007
+    python python/wayback_recover.py download --source old --workers 3  # Download pre-2007
+    python python/wayback_recover.py download                           # Download all
 """
 
 import argparse
@@ -128,15 +129,22 @@ async def download_snapshot(
         return {"url": entry["url"], "status": "downloaded"}
 
 
-async def recover(source: str, max_workers: int = 3) -> list[dict]:
-    """Discover and download all archived pages for a source."""
+async def download_all(source: str, max_workers: int = 3) -> list[dict]:
+    """Download all archived pages for a source from saved manifest."""
     config = CDX_QUERIES[source]
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    entries = discover_urls(source)
+    manifest_path = Path(f"data/manifests/{source}.json")
+    if not manifest_path.exists():
+        log.error(f"Manifest not found: {manifest_path}. Run 'discover' first.")
+        return []
+
+    import json
+    entries = json.loads(manifest_path.read_text())
+
     if not entries:
-        log.warning(f"No URLs found for {source}")
+        log.warning(f"No URLs in manifest for {source}")
         return []
 
     semaphore = asyncio.Semaphore(max_workers)
@@ -163,21 +171,59 @@ async def recover(source: str, max_workers: int = 3) -> list[dict]:
     return results
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Recover NMusers from Wayback Machine")
-    parser.add_argument(
-        "--source",
-        choices=["old", "pipermail", "all"],
-        default="all",
-        help="Which archive to recover",
-    )
-    parser.add_argument("--workers", type=int, default=3, help="Max concurrent requests")
-    args = parser.parse_args()
+def cmd_discover(args):
+    """Query CDX API and save URL manifests."""
+    import json
+
+    manifest_dir = Path("data/manifests")
+    manifest_dir.mkdir(parents=True, exist_ok=True)
 
     sources = ["old", "pipermail"] if args.source == "all" else [args.source]
 
     for source in sources:
-        asyncio.run(recover(source, args.workers))
+        entries = discover_urls(source)
+        manifest_path = manifest_dir / f"{source}.json"
+        manifest_path.write_text(json.dumps(entries, indent=2))
+        log.info(f"Saved manifest: {manifest_path} ({len(entries)} entries)")
+
+
+def cmd_download(args):
+    """Download pages from saved manifests."""
+    sources = ["old", "pipermail"] if args.source == "all" else [args.source]
+
+    for source in sources:
+        asyncio.run(download_all(source, args.workers))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Recover NMusers from Wayback Machine")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # discover subcommand
+    discover_parser = subparsers.add_parser(
+        "discover", help="Query CDX API and save URL manifests"
+    )
+    discover_parser.add_argument(
+        "--source", choices=["old", "pipermail", "all"], default="all",
+    )
+
+    # download subcommand
+    download_parser = subparsers.add_parser(
+        "download", help="Download pages from saved manifests"
+    )
+    download_parser.add_argument(
+        "--source", choices=["old", "pipermail", "all"], default="all",
+    )
+    download_parser.add_argument(
+        "--workers", type=int, default=3, help="Max concurrent requests",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "discover":
+        cmd_discover(args)
+    elif args.command == "download":
+        cmd_download(args)
 
 
 if __name__ == "__main__":
