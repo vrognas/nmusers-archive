@@ -1,0 +1,24 @@
+# Raw scraped HTML (large, reproducible)
+data/raw/
+data/raw_cognigencorp/
+data/raw_cognigen_pipermail/
+data/manifests/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# uv
+.python-version
+
+# R
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# OS
+.DS_Store
+Thumbs.db

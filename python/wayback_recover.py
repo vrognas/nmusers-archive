@@ -1,0 +1,184 @@
+"""
+Recover NMusers messages from the Wayback Machine.
+
+Downloads archived Cognigen pages in both formats:
+  1. Old format: cognigencorp.com/nonmem/nm/*.html (1995–2006)
+  2. Pipermail format: cognigen.com/nmusers/YYYY-Month/NNN.html (2006–2021)
+
+Uses the Wayback Machine CDX API to discover URLs, then fetches
+the archived snapshots.
+
+Usage:
+    python python/wayback_recover.py --source old       # 1995-2006 content
+    python python/wayback_recover.py --source pipermail  # 2006-2021 content
+    python python/wayback_recover.py --source all        # Both
+"""
+
+import argparse
+import asyncio
+import logging
+import re
+from pathlib import Path
+
+import httpx
+
+WAYBACK_CDX = "https://web.archive.org/cdx/search/cdx"
+WAYBACK_RAW = "https://web.archive.org/web/{timestamp}id_/{url}"
+USER_AGENT = "nmusers-archive/0.1 (https://github.com/vrognas/nmusers-archive)"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-5s %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("wayback")
+
+# CDX queries for each source
+CDX_QUERIES = {
+    "old": {
+        "url": "cognigencorp.com/nonmem/nm/*",
+        "filter": re.compile(r"/nonmem/nm/\d{2}\w{3}\d+\.html$"),
+        "output_dir": "data/raw_cognigencorp",
+    },
+    "pipermail": {
+        "url": "cognigen.com/nmusers/*",
+        "filter": re.compile(r"/nmusers/\d{4}-\w+/\d+\.html$"),
+        "output_dir": "data/raw_cognigen_pipermail",
+    },
+}
+
+
+def discover_urls(source: str) -> list[dict]:
+    """Query the Wayback CDX API to find all archived message URLs."""
+    config = CDX_QUERIES[source]
+    log.info(f"Querying CDX API for {source} archive...")
+
+    params = {
+        "url": config["url"],
+        "output": "text",
+        "fl": "timestamp,original",
+        "collapse": "urlkey",  # One snapshot per unique URL
+        "limit": "10000",
+    }
+
+    with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=120) as client:
+        response = client.get(WAYBACK_CDX, params=params)
+        response.raise_for_status()
+
+    results = []
+    for line in response.text.strip().split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split(" ", 1)
+        if len(parts) != 2:
+            continue
+        timestamp, original_url = parts
+        if config["filter"].search(original_url):
+            results.append({"timestamp": timestamp, "url": original_url})
+
+    log.info(f"Found {len(results)} message pages in {source} archive")
+    return results
+
+
+def url_to_filename(url: str, source: str) -> str:
+    """Convert a URL to a safe local filename."""
+    if source == "old":
+        # cognigencorp.com/nonmem/nm/99apr242002.html → 99apr242002.html
+        match = re.search(r"(\d{2}\w{3}\d+\.html)$", url)
+        return match.group(1) if match else url.split("/")[-1]
+    else:
+        # cognigen.com/nmusers/2006-December/0015.html → 2006-December_0015.html
+        match = re.search(r"(\d{4}-\w+)/(\d+\.html)$", url)
+        if match:
+            return f"{match.group(1)}_{match.group(2)}"
+        return url.split("/")[-1]
+
+
+async def download_snapshot(
+    client: httpx.AsyncClient,
+    entry: dict,
+    output_dir: Path,
+    source: str,
+    semaphore: asyncio.Semaphore,
+) -> dict:
+    """Download a single Wayback Machine snapshot."""
+    filename = url_to_filename(entry["url"], source)
+    filepath = output_dir / filename
+
+    if filepath.exists() and filepath.stat().st_size > 0:
+        return {"url": entry["url"], "status": "cached"}
+
+    # Use id_ prefix to get the original page without Wayback toolbar
+    wayback_url = f"https://web.archive.org/web/{entry['timestamp']}id_/{entry['url']}"
+
+    async with semaphore:
+        try:
+            response = await client.get(wayback_url)
+        except httpx.HTTPError as exc:
+            log.warning(f"{filename} FAILED: {exc}")
+            return {"url": entry["url"], "status": "error"}
+
+        if response.status_code != 200:
+            log.warning(f"{filename} HTTP {response.status_code}")
+            return {"url": entry["url"], "status": "error"}
+
+        filepath.write_text(response.text, encoding="utf-8")
+        await asyncio.sleep(1)  # Be polite to the Wayback Machine
+
+        return {"url": entry["url"], "status": "downloaded"}
+
+
+async def recover(source: str, max_workers: int = 3) -> list[dict]:
+    """Discover and download all archived pages for a source."""
+    config = CDX_QUERIES[source]
+    output_dir = Path(config["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    entries = discover_urls(source)
+    if not entries:
+        log.warning(f"No URLs found for {source}")
+        return []
+
+    semaphore = asyncio.Semaphore(max_workers)
+    total = len(entries)
+
+    log.info(f"Downloading {total} pages to {output_dir} ({max_workers} workers)")
+
+    async with httpx.AsyncClient(
+        headers={"User-Agent": USER_AGENT},
+        timeout=30,
+        follow_redirects=True,
+    ) as client:
+        tasks = [
+            download_snapshot(client, entry, output_dir, source, semaphore)
+            for entry in entries
+        ]
+        results = await asyncio.gather(*tasks)
+
+    downloaded = sum(1 for r in results if r["status"] == "downloaded")
+    cached = sum(1 for r in results if r["status"] == "cached")
+    failed = sum(1 for r in results if r["status"] == "error")
+
+    log.info(f"Done: {downloaded} downloaded, {cached} cached, {failed} failed")
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Recover NMusers from Wayback Machine")
+    parser.add_argument(
+        "--source",
+        choices=["old", "pipermail", "all"],
+        default="all",
+        help="Which archive to recover",
+    )
+    parser.add_argument("--workers", type=int, default=3, help="Max concurrent requests")
+    args = parser.parse_args()
+
+    sources = ["old", "pipermail"] if args.source == "all" else [args.source]
+
+    for source in sources:
+        asyncio.run(recover(source, args.workers))
+
+
+if __name__ == "__main__":
+    main()
