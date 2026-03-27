@@ -70,24 +70,136 @@ def classify_subject(subject: str) -> str:
 
 
 def parse_date_flexible(date_string: str) -> datetime | None:
-    """Try multiple date formats."""
-    cleaned = re.sub(r"^\w+,\s*", "", date_string.strip())
+    """Try multiple date formats, stripping timezone noise first."""
+    cleaned = date_string.strip()
+    # Strip leading "Date:" prefix (doubled in some records)
+    cleaned = re.sub(r"^(Date:\s*)+", "", cleaned).strip()
+    # Strip parenthesized timezone names: (PST), (Eastern Daylight Time), etc.
+    cleaned = re.sub(r"\s*\([A-Za-z\s]+\)\s*$", "", cleaned)
+    # Collapse double spaces (mbox dates: "Apr  3" → "Apr 3")
+    cleaned = re.sub(r"  +", " ", cleaned)
+    # Normalize am/pm: lowercase → uppercase, add space if missing
+    cleaned = re.sub(r"(\d)(am|pm|AM|PM)", r"\1 \2", cleaned)
+    cleaned = re.sub(r"\bam\b", "AM", cleaned)
+    cleaned = re.sub(r"\bpm\b", "PM", cleaned)
+    # Strip truncated timezone offsets (3 digits): -050, +020
+    cleaned = re.sub(r"\s+[+-]\d{3}\s*$", "", cleaned)
+    # Strip trailing bare timezone abbreviations: GMT, EDT, MET, SAST-2, GMT0BST, etc.
+    # Negative lookbehind avoids stripping AM/PM from 12-hour times.
+    cleaned = re.sub(r"\s+(?!AM$|PM$)[A-Z]{2,5}[\dA-Z]*(?:[+-]\d{1,2})?\s*$", "", cleaned)
+    # Strip leading day name (with or without comma): "Monday, " / "Thursday "
+    cleaned = re.sub(
+        r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|"
+        r"Thursday|Friday|Saturday|Sunday)\.?,?\s+",
+        "", cleaned, flags=re.IGNORECASE,
+    )
+    # Strip dots after day numbers: "29. April" → "29 April"
+    cleaned = re.sub(r"(\d)\.\s+", r"\1 ", cleaned)
+    # Strip Swedish "den" prefix: "den 4 juli" → "4 juli"
+    cleaned = re.sub(r"^den\s+", "", cleaned, flags=re.IGNORECASE)
+    # Normalize Swedish/non-English month names to English
+    _swedish_months = {
+        "januari": "January", "februari": "February", "mars": "March",
+        "maj": "May", "juni": "June", "juli": "July",
+        "augusti": "August", "oktober": "October",
+    }
+    for sv, en in _swedish_months.items():
+        cleaned = re.sub(r"\b" + sv + r"\b", en, cleaned, flags=re.IGNORECASE)
+    # Title-case month names so strptime matches: "june" → "June"
+    cleaned = re.sub(
+        r"\b(january|february|march|april|may|june|july|august|"
+        r"september|october|november|december)\b",
+        lambda m: m.group(0).capitalize(),
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Normalize "04/17/95, Time:15:51:31" → "04/17/95 15:51:31"
+    cleaned = re.sub(r",\s*Time:", " ", cleaned)
+    # Strip trailing junk after date (e.g., "14:56:15 -0500Mark,")
+    # Only match after HH:MM:SS (with seconds) to avoid clobbering AM/PM.
+    cleaned = re.sub(
+        r"(\d{2}:\d{2}:\d{2}(?:\s+[+-]\d{4})?)\s*[A-Za-z].*$",
+        r"\1", cleaned,
+    )
+    # Strip trailing colons: "09:44:25 -0500:"
+    cleaned = re.sub(r":\s*$", "", cleaned)
+    # Strip subject-line junk between month name and day number:
+    # "MarchRe: [NMusers] Ln(DV 13," → "March 13,"
+    cleaned = re.sub(
+        r"(January|February|March|April|May|June|July|August|"
+        r"September|October|November|December)"
+        r"[A-Za-z:&\[\]\s\(\)]+?(\d{1,2}[,\s])",
+        r"\1 \2", cleaned, flags=re.IGNORECASE,
+    )
+    # Strip AM/PM when hour is 13-23: "14:45 PM" → "14:45"
+    cleaned = re.sub(r"(\b(?:1[3-9]|2[0-3]):\d{2})\s+[AP]M", r"\1", cleaned)
+    # Remove duplicate year: "2002 2002" → "2002"
+    cleaned = re.sub(r"(\d{4})\s+\1", r"\1", cleaned)
     formats = [
+        # RFC 2822 variants
         "%d %b %Y %H:%M:%S %z",
         "%d %b %Y %H:%M:%S",
-        "%b %d, %Y %I:%M %p",
+        "%d %b %Y %H:%M %p",
+        "%d %b %Y %H:%M",
+        "%d %b %Y",
+        # US formats: M/D/YYYY
+        "%m/%d/%Y %I:%M %p",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y",
+        # 2-digit year
+        "%m/%d/%y %H:%M:%S",
+        "%m/%d/%y %H:%M",
+        "%m/%d/%y %I:%M %p",
+        # Long month name variants
         "%B %d, %Y %I:%M %p",
-        "%a, %d %b %Y %H:%M:%S %z",
-        "%a, %d %b %Y %H:%M:%S",
+        "%B %d, %Y %H:%M",
+        "%B %d %Y %H:%M",
+        "%B %d, %Y %H:%M:%S %p",
+        "%B %d %Y",
+        # Short month name variants
+        "%b %d, %Y %I:%M %p",
+        # DD-Mon-YYYY
+        "%d-%b-%Y %H:%M:%S",
+        "%d-%b-%Y %H:%M",
+        # Day Month Year variants
+        "%d %B %Y %H:%M",
+        "%d %B %Y %I:%M %p",
+        "%d %B %Y",
+        # Mbox timestamp: "May 20 06:01:45 1997"
+        "%b %d %H:%M:%S %Y",
+        # 2-digit year short month: "16 Oct 99"
+        "%d %b %y %H:%M:%S",
+        "%d %b %y",
+        # US short: 10/16/95
+        "%m/%d/%y",
+        # Month Day, Year (no time)
+        "%B %d, %Y",
+        # Short month: "Oct 16, 2003 10:43 AM"
+        "%b %d, %Y %H:%M %p",
+        "%b %d, %Y %H:%M",
+        "%b %d, %Y",
+        # Time-first US: "11:38 AM 9/17/02"
+        "%I:%M %p %m/%d/%y",
+        # Day-only: "11 Aug 2005"
+        "%d %b %Y",
     ]
-    for fmt in formats:
-        try:
-            dt = datetime.strptime(cleaned, fmt)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
-        except ValueError:
-            continue
+    # Try each format with the cleaned string, then again with trailing
+    # 4-digit UTC offset stripped (for dates where offset isn't in the format).
+    variants = [cleaned]
+    stripped = re.sub(r"\s+[+-]\d{4}\s*$", "", cleaned)
+    if stripped != cleaned:
+        variants.append(stripped)
+    for candidate in variants:
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(candidate, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc)
+            except ValueError:
+                continue
     return None
 
 
@@ -114,7 +226,7 @@ def parse_old_format_page(filepath: Path) -> list[dict]:
     messages = []
 
     # Split on separator patterns (horizontal rules between messages)
-    message_blocks = re.split(r"_{10,}|={10,}|\*{10,}", body_text)
+    message_blocks = re.split(r"_{10,}|={10,}|\*{5,}", body_text)
 
     if len(message_blocks) <= 1:
         # Single message page
@@ -122,30 +234,131 @@ def parse_old_format_page(filepath: Path) -> list[dict]:
         if msg:
             messages.append(msg)
     else:
+        prev_block = ""
         for block in message_blocks:
             block = block.strip()
             if len(block) < 50:
+                prev_block = block
                 continue
-            msg = _extract_message_from_block(block, page_title, filepath.name)
+            msg = _extract_message_from_block(
+                block, page_title, filepath.name, prev_block=prev_block,
+            )
             if msg:
                 messages.append(msg)
+            prev_block = block
 
     return messages
 
 
-def _extract_message_from_block(block: str, page_title: str, filename: str) -> dict | None:
+def _extract_from_name(from_raw: str) -> str:
+    """Extract display name from a From: field, falling back to email."""
+    # Strip [mailto:...] notation
+    name = re.sub(r"\s*\[mailto:[^\]]+\]", "", from_raw).strip()
+    # Strip <email> bracket notation
+    name = re.sub(r"\s*<[^>]+>", "", name).strip()
+    # Strip bare email addresses from display name
+    name = re.sub(r"\s*\S+@\S+", "", name).strip()
+    # Strip leading "Subject:" leaked from shifted headers
+    name = re.sub(r"^Subject:\s*", "", name).strip()
+    # Strip trailing mbox timestamp: "Thu Oct 19 17:05:14 1995"
+    name = re.sub(
+        r"\s+\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}\s*$",
+        "", name,
+    ).strip()
+    # Strip surrounding quotes
+    name = name.strip('"').strip()
+    # Fallback: if no display name remains, use the email address itself
+    if not name and from_raw:
+        email_match = re.search(r"[\w.\-+]+@[\w.\-]+", from_raw)
+        name = email_match.group(0) if email_match else from_raw
+    return name
+
+
+def _extract_message_from_block(
+    block: str, page_title: str, filename: str, prev_block: str = "",
+) -> dict | None:
     """Extract a single message dict from a text block."""
-    from_match = re.search(r"From:\s*(.+?)(?:\n|$)", block)
+    # Match From: with value on same line, or on the next line if current line is empty
+    from_match = re.search(r"From:\s*(\S.+?)(?:\n|$)", block)
+    if not from_match:
+        # Multiline: "From:\n<name on next line>"
+        from_match = re.search(r"From:\s*\n(.+?)(?:\n|$)", block)
     subject_match = re.search(r"Subject:\s*(.+?)(?:\n|$)", block)
     date_match = re.search(r"Date:\s*(.+?)(?:\n|$)", block)
+    # Fallback: Outlook "Sent:" header
+    if not date_match:
+        date_match = re.search(r"Sent:\s*(.+?)(?:\n|$)", block)
+    # Fallback: Date: may be at the tail of the previous block (split landed
+    # between Date: and From:). Use the LAST match (closest to the separator).
+    if not date_match and prev_block:
+        all_dates = list(re.finditer(r"Date:\s*(.+?)(?:\n|$)", prev_block))
+        if all_dates:
+            date_match = all_dates[-1]
 
-    from_name = from_match.group(1).strip() if from_match else ""
-    from_name = re.sub(r"\s*<[^>]+>", "", from_name).strip()
-    from_name = re.sub(r"\s*\S+@\S+", "", from_name).strip()
+    # Fallback: Unix mbox "From user@host Day Mon DD HH:MM:SS YYYY" (no colon)
+    mbox_match = re.search(
+        r"^From\s+(\S+@\S+)\s+\w{3}\s+(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})",
+        block, re.MULTILINE,
+    )
+    if not from_match and mbox_match:
+        from_match = mbox_match
+    if not date_match and mbox_match:
+        # Synthesize a date_match-like object from the mbox timestamp
+        date_match = re.search(
+            r"(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})",
+            mbox_match.group(2),
+        )
+    # Fallback: extract timestamp embedded in From: line
+    # e.g. "From: SAM LIAO <email> Thu Oct 19 17:05:14 1995"
+    if not date_match and from_match:
+        embedded_ts = re.search(
+            r"\w{3}\s+(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})",
+            from_match.group(1),
+        )
+        if embedded_ts:
+            date_match = embedded_ts
+
+    # Fallback: "From Name" without colon (e.g., "From Nick Holford")
+    if not from_match:
+        from_match = re.search(r"^From\s+([A-Z][a-z]+ [A-Z][a-z]+.*)$", block, re.MULTILINE)
+
+    # Require a From match — blocks with only Date are almost always
+    # quoted content, search results, or code fragments, not real messages.
+    if not from_match:
+        return None
+
+    from_name = _extract_from_name(from_match.group(1).strip() if from_match else "")
 
     subject = subject_match.group(1).strip() if subject_match else page_title
     date_raw = date_match.group(1).strip() if date_match else ""
+
+    # Detect swapped Subject/Date fields: if date_raw looks like a subject
+    # (starts with Re:/FW:) and subject looks like a date, swap them.
+    if date_raw and subject:
+        date_looks_like_subject = bool(re.match(r"(?:Re|FW|Fwd):", date_raw, re.IGNORECASE))
+        subject_looks_like_date = bool(re.match(r"\w{3},?\s+\d", subject))
+        if date_looks_like_subject and subject_looks_like_date:
+            date_raw, subject = subject, date_raw
+
     date = parse_date_flexible(date_raw) if date_raw else None
+
+    # Fallback: if date still None, look for a date in other header fields
+    # or in a second Subject: line (handles shifted headers).
+    if date is None:
+        # Check if subject looks like a date
+        candidate = parse_date_flexible(subject) if subject else None
+        if candidate:
+            date = candidate
+            date_raw = subject
+        else:
+            # Look for a second Subject: line which may contain the date
+            all_subjects = re.findall(r"Subject:\s*(.+?)(?:\n|$)", block)
+            for s in all_subjects[1:]:  # skip first (already captured)
+                candidate = parse_date_flexible(s.strip())
+                if candidate:
+                    date = candidate
+                    date_raw = s.strip()
+                    break
 
     return {
         "source": "cognigencorp",
@@ -183,9 +396,7 @@ def parse_pipermail_page(filepath: Path) -> dict | None:
     from_match = re.search(r"From:\s*(.+?)(?:\n|$)", body_raw)
     date_match = re.search(r"Date:\s*(.+?)(?:\n|$)", body_raw)
 
-    from_name = from_match.group(1).strip() if from_match else ""
-    from_name = re.sub(r"\s*<[^>]+>", "", from_name).strip()
-    from_name = re.sub(r"\s*\S+@\S+", "", from_name).strip()
+    from_name = _extract_from_name(from_match.group(1).strip() if from_match else "")
 
     date_raw = date_match.group(1).strip() if date_match else ""
     date = parse_date_flexible(date_raw) if date_raw else None
