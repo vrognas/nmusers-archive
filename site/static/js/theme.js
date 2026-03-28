@@ -12,8 +12,6 @@
   function apply(theme) {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem(STORAGE_KEY, theme);
-    const btn = document.getElementById("theme-toggle");
-    if (btn) btn.textContent = theme === "light" ? "Dark" : "Light";
   }
 
   // Apply immediately to avoid flash

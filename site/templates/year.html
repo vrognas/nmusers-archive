@@ -2,13 +2,15 @@
 {% block title %}{{ year }} &mdash; NMusers Archive{% endblock %}
 
 {% block content %}
-<nav class="breadcrumb">
-  <a href="/">Home</a><span class="sep">/</span>
-  {{ year }}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <ol role="list">
+    <li><a href="/">Home</a><span class="sep">/</span></li>
+    <li aria-current="page">{{ year }}</li>
+  </ol>
 </nav>
 
 <h1>{{ year }}</h1>
-<p style="color: var(--fg-dim); margin-bottom: 1.5rem;">{{ total_messages }} messages across {{ months | length }} months</p>
+<p class="page-desc">{{ total_messages }} messages across {{ months | length }} months</p>
 
 <div class="month-grid">
   {% for m in months %}

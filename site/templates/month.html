@@ -2,34 +2,98 @@
 {% block title %}{{ month_name }} {{ year }} &mdash; NMusers Archive{% endblock %}
 
 {% block content %}
-<nav class="breadcrumb">
-  <a href="/">Home</a><span class="sep">/</span>
-  <a href="/{{ year }}/">{{ year }}</a><span class="sep">/</span>
-  {{ month_name }}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <ol role="list">
+    <li><a href="/">Home</a><span class="sep">/</span></li>
+    <li><a href="/{{ year }}/">{{ year }}</a><span class="sep">/</span></li>
+    <li aria-current="page">{{ month_name }}</li>
+  </ol>
 </nav>
 
 <h1>{{ month_name }} {{ year }}</h1>
-<p style="color: var(--fg-dim); margin-bottom: 1rem;">{{ messages | length }} messages</p>
+<p class="page-desc">{{ messages | length }} messages</p>
 
-<table class="msg-table">
+<div class="sort-controls">
+  <span class="sort-label">View:</span>
+  <button class="sort-btn" data-view="date" aria-pressed="false">By date</button>
+  <button class="sort-btn active" data-view="thread" aria-pressed="true">By thread</button>
+</div>
+
+<table class="msg-table" id="date-view" style="display: none;" aria-label="Messages sorted by date">
   <thead>
     <tr>
       <th class="date-col">Date</th>
       <th class="author-col">Author</th>
       <th class="subject-col">Subject</th>
+      <th class="cat-col">Category</th>
     </tr>
   </thead>
   <tbody>
-    {% for msg in messages %}
+    {% for msg in date_sorted %}
     <tr>
       <td class="date-col">{{ msg.date_short }}</td>
       <td class="author-col"><a href="/authors/{{ msg.author_slug }}/">{{ msg.from_name }}</a></td>
       <td class="subject-col">
         <a href="{{ msg.url }}">{{ msg.subject }}</a>
+      </td>
+      <td class="cat-col">
         <span class="badge badge-{{ msg.category }}">{{ msg.category }}</span>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+
+<table class="msg-table" id="thread-view" aria-label="Messages grouped by thread">
+  <thead>
+    <tr>
+      <th class="date-col">Date</th>
+      <th class="author-col">Author</th>
+      <th class="subject-col">Subject</th>
+      <th class="cat-col">Category</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for msg in messages %}
+    <tr{% if msg.is_reply %} class="thread-reply"{% endif %}>
+      <td class="date-col">{{ msg.date_short }}</td>
+      <td class="author-col"><a href="/authors/{{ msg.author_slug }}/">{{ msg.from_name }}</a></td>
+      <td class="subject-col">
+        <a href="{{ msg.url }}">{{ msg.subject }}</a>
+      </td>
+      <td class="cat-col">
+        <span class="badge badge-{{ msg.category }}">{{ msg.category }}</span>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var btns = document.querySelectorAll(".sort-btn[data-view]");
+  var dateView = document.getElementById("date-view");
+  var threadView = document.getElementById("thread-view");
+
+  btns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      btns.forEach(function (b) {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
+      btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
+      if (btn.dataset.view === "thread") {
+        dateView.style.display = "none";
+        threadView.style.display = "";
+      } else {
+        dateView.style.display = "";
+        threadView.style.display = "none";
+      }
+    });
+  });
+})();
+</script>
 {% endblock %}

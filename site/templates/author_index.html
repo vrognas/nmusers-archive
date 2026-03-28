@@ -3,21 +3,22 @@
 
 {% block content %}
 <h1>Contributors</h1>
-<p style="color: var(--fg-dim); margin-bottom: 1rem;">{{ authors | length }} people have contributed to the NMusers mailing list.</p>
+<p class="page-desc">{{ authors | length }} people have contributed to the NMusers mailing list.</p>
 
+<label for="author-search" class="sr-only">Filter authors by name</label>
 <input type="text" id="author-search" class="author-search" placeholder="Filter by name..." autocomplete="off">
 
 <div class="sort-controls">
   <span class="sort-label">Sort by:</span>
-  <button class="sort-btn active" data-sort="count-desc">Most active</button>
-  <button class="sort-btn" data-sort="name-asc">Name A–Z</button>
-  <button class="sort-btn" data-sort="name-desc">Name Z–A</button>
-  <button class="sort-btn" data-sort="recent">Most recent</button>
+  <button class="sort-btn active" data-sort="count-desc" aria-pressed="true">Most active</button>
+  <button class="sort-btn" data-sort="name-asc" aria-pressed="false">Name A–Z</button>
+  <button class="sort-btn" data-sort="name-desc" aria-pressed="false">Name Z–A</button>
+  <button class="sort-btn" data-sort="recent" aria-pressed="false">Most recent</button>
 </div>
 
 <div class="author-count-display" id="author-count">Showing all {{ authors | length }}</div>
 
-<ul class="author-list" id="author-list">
+<ul class="author-list" id="author-list" role="list">
   {% for a in authors %}
   <li data-name="{{ a.name | lower }}" data-count="{{ a.count }}" data-first="{{ a.first_year or 0 }}" data-last="{{ a.last_year or 0 }}">
     <div class="author-entry">
@@ -84,8 +85,12 @@
 
   btns.forEach(function (btn) {
     btn.addEventListener("click", function () {
-      btns.forEach(function (b) { b.classList.remove("active"); });
+      btns.forEach(function (b) {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
       btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
       sortBy(btn.dataset.sort);
     });
   });

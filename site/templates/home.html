@@ -3,61 +3,91 @@
 
 {% block content %}
 <h1>NMusers Mailing List Archive</h1>
-<p style="color: var(--fg-dim); margin-bottom: 1rem;">
+<p class="page-desc">
   Searchable archive of {{ total_messages | commafy }} messages from the NONMEM users mailing list, spanning {{ year_min }}&ndash;{{ year_max }}.
 </p>
 
-<div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
-  <input type="text" id="search-input" placeholder="Search {{ total_messages | commafy }} messages..." class="home-search-input" autocomplete="off">
-</div>
+<noscript><p class="page-desc">JavaScript is required for search, filtering, and the chart. Browse messages by <a href="/{{ year_max }}/">year</a> or <a href="/authors/">author</a>.</p></noscript>
 
-<div id="search-results" style="display: none; margin-bottom: 2rem;">
-  <div id="search-status" style="color: var(--fg-muted); font-size: 0.85rem; margin-bottom: 0.75rem;"></div>
+<div id="search-results" class="search-results-wrap">
+  <div id="search-status" class="search-status"></div>
   <div id="search-hits"></div>
 </div>
 
 <div id="home-content">
-<div class="stats-grid">
-  <div class="stat-card">
-    <span class="number">{{ total_messages | commafy }}</span>
-    <span class="label">Messages</span>
+<dl class="stats-bar">
+  <div class="stats-bar-item">
+    <dt>Messages</dt>
+    <dd>{{ total_messages | commafy }}</dd>
   </div>
-  <div class="stat-card">
-    <span class="number">{{ total_authors | commafy }}</span>
-    <span class="label">Contributors</span>
+  <div class="stats-bar-item">
+    <dt>Contributors</dt>
+    <dd>{{ total_authors | commafy }}</dd>
   </div>
-  <div class="stat-card">
-    <span class="number">{{ year_max - year_min + 1 }}</span>
-    <span class="label">Years</span>
+  <div class="stats-bar-item">
+    <dt>Years</dt>
+    <dd>{{ year_max - year_min + 1 }}</dd>
   </div>
-  <div class="stat-card">
-    <span class="number">{{ total_technical | commafy }}</span>
-    <span class="label">Technical Q&amp;A</span>
+  <div class="stats-bar-item">
+    <dt>Technical Q&amp;A</dt>
+    <dd>{{ total_technical | commafy }}</dd>
   </div>
-</div>
+</dl>
 
 <h2>Messages Over Time</h2>
-<div class="card" style="padding: 1rem;">
-  <canvas id="year-chart" height="120"></canvas>
+<div class="card card-chart">
+  <canvas id="year-chart" height="120" role="img" aria-label="Stacked bar chart showing NMusers messages per year from {{ year_min }} to {{ year_max }}, colored by category"></canvas>
+  <table class="sr-only">
+    <caption>Messages per year by category</caption>
+    <thead>
+      <tr><th>Year</th><th>Technical</th><th>Job</th><th>Workshop</th><th>Announcement</th><th>Admin</th><th>Total</th></tr>
+    </thead>
+    <tbody>
+      {% for y in years %}
+      <tr><td>{{ y.year }}</td><td>{{ y.technical }}</td><td>{{ y.job }}</td><td>{{ y.workshop }}</td><td>{{ y.announcement }}</td><td>{{ y.admin }}</td><td>{{ y.count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 
 <h2>Messages</h2>
-<div class="sort-controls">
-  <span class="sort-label">Category:</span>
-  <button class="cat-toggle active" data-cat="technical">Technical</button>
-  <button class="cat-toggle active" data-cat="job">Job</button>
-  <button class="cat-toggle active" data-cat="workshop">Workshop</button>
-  <button class="cat-toggle active" data-cat="announcement">Announcement</button>
-  <button class="cat-toggle active" data-cat="admin">Admin</button>
+<div class="home-search">
+  <label for="search-input" class="sr-only">Search messages</label>
+  <input type="text" id="search-input" placeholder="Search {{ total_messages | commafy }} messages..." class="home-search-input" autocomplete="off">
 </div>
-<div class="sort-controls">
-  <span class="sort-label">Year:</span>
-  <button class="sort-btn active" data-year="all">All</button>
-  {% for year in years | reverse %}
-  <button class="sort-btn" data-year="{{ year.year }}">{{ year.year }}</button>
-  {% endfor %}
-</div>
-<table class="msg-table">
+
+<div class="messages-layout">
+<aside class="filter-sidebar">
+  <div class="filter-group">
+    <h3 class="filter-heading">View</h3>
+    <div class="filter-options">
+      <button class="sort-btn active" data-view="date" aria-pressed="true">By date</button>
+      <button class="sort-btn" data-view="thread" aria-pressed="false">By thread</button>
+    </div>
+  </div>
+  <div class="filter-group">
+    <h3 class="filter-heading">Category</h3>
+    <div class="filter-options">
+      <button class="cat-toggle active" data-cat="technical" aria-pressed="true">Technical</button>
+      <button class="cat-toggle active" data-cat="job" aria-pressed="true">Job</button>
+      <button class="cat-toggle active" data-cat="workshop" aria-pressed="true">Workshop</button>
+      <button class="cat-toggle active" data-cat="announcement" aria-pressed="true">Announcement</button>
+      <button class="cat-toggle active" data-cat="admin" aria-pressed="true">Admin</button>
+    </div>
+  </div>
+  <div class="filter-group">
+    <h3 class="filter-heading">Year</h3>
+    <div class="filter-options filter-options--year">
+      <button class="sort-btn active" data-year="all" aria-pressed="true">All</button>
+      {% for year in years | reverse %}
+      <button class="sort-btn" data-year="{{ year.year }}" aria-pressed="false">{{ year.year }}</button>
+      {% endfor %}
+    </div>
+  </div>
+</aside>
+<div class="messages-main">
+<div id="date-view">
+<table class="msg-table" aria-label="Recent messages sorted by date">
   <thead>
     <tr>
       <th class="date-col">Date</th>
@@ -82,10 +112,27 @@
   </tbody>
 </table>
 {% if recent_messages | length > 30 %}
-<div style="text-align: center; margin-top: 1rem;">
-  <button id="load-more" class="sort-btn" style="padding: 0.5rem 2rem;">Load more</button>
+<div class="load-more-wrap">
+  <button id="load-more" class="sort-btn load-more-btn">Load more</button>
+  <p id="browse-hint" class="search-status browse-hint">
+    Browse all messages by <a href="/{{ year_max }}/">year</a> or use <a href="/search/">search</a>.
+  </p>
 </div>
 {% endif %}
+</div>
+<table class="msg-table" id="thread-view" style="display: none;" aria-label="Messages grouped by thread">
+  <thead>
+    <tr>
+      <th class="date-col">Date</th>
+      <th class="author-col">Author</th>
+      <th class="subject-col">Subject</th>
+      <th class="cat-col">Category</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+</div>
+</div>
 </div>
 {% endblock %}
 
@@ -94,8 +141,30 @@
 (function () {
   var catBtns = document.querySelectorAll(".cat-toggle");
   var yearBtns = document.querySelectorAll(".sort-btn[data-year]");
-  var rows = document.querySelectorAll(".msg-table tbody tr");
+  var viewBtns = document.querySelectorAll(".sort-btn[data-view]");
+  var dateView = document.getElementById("date-view");
+  var threadView = document.getElementById("thread-view");
+  var rows = document.querySelectorAll(".msg-table tbody tr[data-cat]");
   var activeYear = "all";
+
+  // Build message data for thread view from table rows
+  var messages = [];
+  rows.forEach(function (row) {
+    var subjectLink = row.querySelector(".subject-col a");
+    var authorLink = row.querySelector(".author-col a");
+    var badge = row.querySelector(".cat-col .badge");
+    messages.push({
+      subject: subjectLink ? subjectLink.textContent : "",
+      url: subjectLink ? subjectLink.getAttribute("href") : "",
+      author: authorLink ? authorLink.textContent : "",
+      authorUrl: authorLink ? authorLink.getAttribute("href") : "",
+      date: row.querySelector(".date-col") ? row.querySelector(".date-col").textContent : "",
+      cat: row.dataset.cat,
+      year: row.dataset.year,
+      badgeClass: badge ? badge.className : "",
+      badgeText: badge ? badge.textContent : "",
+    });
+  });
 
   function getActiveCats() {
     var cats = [];
@@ -103,30 +172,133 @@
     return cats;
   }
 
-  function filterRows() {
+  function filterDateRows() {
     var cats = getActiveCats();
     rows.forEach(function (row) {
+      if (row.classList.contains("msg-hidden")) return;
       var catMatch = cats.indexOf(row.dataset.cat) !== -1;
       var yearMatch = activeYear === "all" || row.dataset.year === activeYear;
       row.style.display = (catMatch && yearMatch) ? "" : "none";
     });
   }
 
+  function normalizeSubject(s) {
+    var c = s;
+    while (true) {
+      var n = c.replace(/^(Re:|RE:|Fwd:|FW:|Fw:|re:)\s*/, "").replace(/^\[NMusers\]\s*/i, "").trim();
+      if (n === c) break;
+      c = n;
+    }
+    return c.toLowerCase();
+  }
+
+  function buildThreadView() {
+    var cats = getActiveCats();
+    var threads = {};
+    var threadOrder = [];
+
+    messages.forEach(function (msg) {
+      var catMatch = cats.indexOf(msg.cat) !== -1;
+      var yearMatch = activeYear === "all" || msg.year === activeYear;
+      if (!catMatch || !yearMatch) return;
+
+      var tk = normalizeSubject(msg.subject);
+      if (!threads[tk]) {
+        threads[tk] = [];
+        threadOrder.push(tk);
+      }
+      threads[tk].push(msg);
+    });
+
+    // Threads with most recent message first; reverse within each thread (oldest first)
+    threadOrder.forEach(function (tk) { threads[tk].reverse(); });
+
+    var threadTbody = threadView.querySelector("tbody");
+    threadTbody.textContent = "";
+    threadOrder.forEach(function (tk) {
+      var msgs = threads[tk];
+      msgs.forEach(function (msg, i) {
+        var tr = document.createElement("tr");
+        if (i > 0 && msgs.length > 1) tr.className = "thread-reply";
+
+        var dateTd = document.createElement("td");
+        dateTd.className = "date-col";
+        dateTd.textContent = msg.date;
+        tr.appendChild(dateTd);
+
+        var authorTd = document.createElement("td");
+        authorTd.className = "author-col";
+        var authorA = document.createElement("a");
+        authorA.href = msg.authorUrl;
+        authorA.textContent = msg.author;
+        authorTd.appendChild(authorA);
+        tr.appendChild(authorTd);
+
+        var subjectTd = document.createElement("td");
+        subjectTd.className = "subject-col";
+        var subjectA = document.createElement("a");
+        subjectA.href = msg.url;
+        subjectA.textContent = msg.subject;
+        subjectTd.appendChild(subjectA);
+        tr.appendChild(subjectTd);
+
+        var catTd = document.createElement("td");
+        catTd.className = "cat-col";
+        var badge = document.createElement("span");
+        badge.className = msg.badgeClass;
+        badge.textContent = msg.badgeText;
+        catTd.appendChild(badge);
+        tr.appendChild(catTd);
+
+        threadTbody.appendChild(tr);
+      });
+    });
+  }
+
+  function render() {
+    var isThread = document.querySelector(".sort-btn[data-view='thread']").classList.contains("active");
+    if (isThread) {
+      dateView.style.display = "none";
+      threadView.style.display = "";
+      buildThreadView();
+    } else {
+      dateView.style.display = "";
+      threadView.style.display = "none";
+      rows.forEach(function (r) { r.classList.remove("msg-hidden"); });
+      filterDateRows();
+    }
+  }
+
   catBtns.forEach(function (btn) {
     btn.addEventListener("click", function () {
       btn.classList.toggle("active");
-      rows.forEach(function (r) { r.classList.remove("msg-hidden"); });
-      filterRows();
+      btn.setAttribute("aria-pressed", btn.classList.contains("active"));
+      render();
     });
   });
 
   yearBtns.forEach(function (btn) {
     btn.addEventListener("click", function () {
-      yearBtns.forEach(function (b) { b.classList.remove("active"); });
+      yearBtns.forEach(function (b) {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
       btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
       activeYear = btn.dataset.year;
-      rows.forEach(function (r) { r.classList.remove("msg-hidden"); });
-      filterRows();
+      render();
+    });
+  });
+
+  viewBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      viewBtns.forEach(function (b) {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
+      btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
+      render();
     });
   });
 })();
@@ -152,76 +324,126 @@
 
   var canvas = document.getElementById('year-chart');
   if (!canvas) return;
-  var ctx = canvas.getContext('2d');
-  var dpr = window.devicePixelRatio || 1;
-  var w = canvas.parentElement.clientWidth - 32;
-  var h = 180;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
-  ctx.scale(dpr, dpr);
 
-  var maxCount = Math.max.apply(null, data.map(function (d) { return d.count; }));
-  var barW = Math.max(2, (w - data.length * 2) / data.length);
-  var gap = 2;
-  var chartTop = 28;
-  var chartH = h - chartTop - 16;
-  var style = getComputedStyle(document.documentElement);
-  var accentColor = style.getPropertyValue('--accent').trim();
-  var mutedColor = style.getPropertyValue('--fg-muted').trim();
-  var borderColor = style.getPropertyValue('--border').trim();
+  function drawChart() {
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.parentElement.clientWidth - 32;
+    var h = parseInt(getComputedStyle(canvas.parentElement).getPropertyValue('--chart-height')) || 180;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.scale(dpr, dpr);
 
-  var yearMin = data[0].year;
+    var maxCount = Math.max.apply(null, data.map(function (d) { return d.count; }));
+    var barW = Math.max(2, (w - data.length * 2) / data.length);
+    var gap = 2;
+    var chartTop = 28;
+    var chartH = h - chartTop - 16;
+    var style = getComputedStyle(document.documentElement);
+    var mutedColor = style.getPropertyValue('--fg-muted').trim();
+    var borderColor = style.getPropertyValue('--border').trim();
 
-  // Draw release markers first (behind bars)
-  releases.forEach(function (r, ri) {
-    var idx = r.year - yearMin;
-    if (idx < 0 || idx >= data.length) return;
-    var x = idx * (barW + gap) + barW / 2;
-    ctx.strokeStyle = borderColor;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.moveTo(x, chartTop);
-    ctx.lineTo(x, chartTop + chartH);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // Label at top, staggered to avoid overlap
-    ctx.fillStyle = mutedColor;
-    ctx.font = '9px sans-serif';
-    ctx.textAlign = 'center';
-    var labelY = (ri % 2 === 0) ? chartTop - 14 : chartTop - 4;
-    ctx.fillText('NM ' + r.label, x, labelY);
-  });
+    var yearMin = data[0].year;
 
-  // Category colors (match CSS badge colors)
-  var catColors = {
-    technical: style.getPropertyValue('--badge-technical').trim(),
-    workshop: style.getPropertyValue('--badge-workshop').trim(),
-    job: style.getPropertyValue('--badge-job').trim(),
-    announcement: style.getPropertyValue('--badge-announcement').trim(),
-    admin: mutedColor,
-  };
-  var catOrder = ['technical', 'workshop', 'job', 'announcement', 'admin'];
-
-  // Draw stacked bars
-  data.forEach(function (d, i) {
-    var x = i * (barW + gap);
-    var baseY = chartTop + chartH;
-    catOrder.forEach(function (cat) {
-      var segH = (d[cat] / maxCount) * chartH;
-      if (segH < 0.5) return;
-      baseY -= segH;
-      ctx.fillStyle = catColors[cat];
-      ctx.fillRect(x, baseY, barW, segH);
-    });
-    // Year labels every 5 years
-    if (d.year % 5 === 0) {
+    // Draw release markers first (behind bars)
+    releases.forEach(function (r, ri) {
+      var idx = r.year - yearMin;
+      if (idx < 0 || idx >= data.length) return;
+      var x = idx * (barW + gap) + barW / 2;
+      ctx.strokeStyle = borderColor;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartTop);
+      ctx.lineTo(x, chartTop + chartH);
+      ctx.stroke();
+      ctx.setLineDash([]);
       ctx.fillStyle = mutedColor;
-      ctx.font = '10px sans-serif';
+      ctx.font = '9px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(d.year, x + barW / 2, h - 2);
+      var labelY = (ri % 2 === 0) ? chartTop - 14 : chartTop - 4;
+      ctx.fillText('NM ' + r.label, x, labelY);
+    });
+
+    // Category colors (match CSS badge colors)
+    var catColors = {
+      technical: style.getPropertyValue('--badge-technical').trim(),
+      workshop: style.getPropertyValue('--badge-workshop').trim(),
+      job: style.getPropertyValue('--badge-job').trim(),
+      announcement: style.getPropertyValue('--badge-announcement').trim(),
+      admin: mutedColor,
+    };
+    var catOrder = ['technical', 'workshop', 'job', 'announcement', 'admin'];
+
+    // Create patterns for colorblind accessibility
+    function makePattern(color, draw) {
+      var pc = document.createElement('canvas');
+      pc.width = 8; pc.height = 8;
+      var pctx = pc.getContext('2d');
+      pctx.fillStyle = color;
+      pctx.fillRect(0, 0, 8, 8);
+      draw(pctx);
+      return ctx.createPattern(pc, 'repeat');
     }
+
+    var catPatterns = {
+      technical: makePattern(catColors.technical, function () {}),  // solid
+      workshop: makePattern(catColors.workshop, function (p) {      // diagonal lines
+        p.strokeStyle = 'rgba(255,255,255,0.25)';
+        p.lineWidth = 1;
+        p.beginPath(); p.moveTo(0, 8); p.lineTo(8, 0); p.stroke();
+      }),
+      job: makePattern(catColors.job, function (p) {                // dots
+        p.fillStyle = 'rgba(255,255,255,0.3)';
+        p.beginPath(); p.arc(4, 4, 1.5, 0, Math.PI * 2); p.fill();
+      }),
+      announcement: makePattern(catColors.announcement, function (p) {  // horizontal lines
+        p.strokeStyle = 'rgba(255,255,255,0.25)';
+        p.lineWidth = 1;
+        p.beginPath(); p.moveTo(0, 4); p.lineTo(8, 4); p.stroke();
+      }),
+      admin: makePattern(catColors.admin, function (p) {            // crosshatch
+        p.strokeStyle = 'rgba(0,0,0,0.15)';
+        p.lineWidth = 1;
+        p.beginPath(); p.moveTo(0, 8); p.lineTo(8, 0); p.stroke();
+        p.beginPath(); p.moveTo(0, 0); p.lineTo(8, 8); p.stroke();
+      }),
+    };
+
+    // Draw stacked bars
+    data.forEach(function (d, i) {
+      var x = i * (barW + gap);
+      var baseY = chartTop + chartH;
+      catOrder.forEach(function (cat) {
+        var segH = (d[cat] / maxCount) * chartH;
+        if (segH < 0.5) return;
+        baseY -= segH;
+        ctx.fillStyle = catPatterns[cat];
+        ctx.fillRect(x, baseY, barW, segH);
+      });
+      if (d.year % 5 === 0) {
+        ctx.fillStyle = mutedColor;
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(d.year, x + barW / 2, h - 2);
+      }
+    });
+  }
+
+  drawChart();
+
+  // Redraw on theme change
+  new MutationObserver(function () { drawChart(); }).observe(
+    document.documentElement,
+    { attributes: true, attributeFilter: ['data-theme'] }
+  );
+
+  // Redraw on resize (debounced)
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(drawChart, 150);
   });
 })();
 
@@ -229,6 +451,7 @@
 (function () {
   var btn = document.getElementById('load-more');
   if (!btn) return;
+  var hint = document.getElementById('browse-hint');
   var batch = 30;
   btn.addEventListener('click', function () {
     var hidden = document.querySelectorAll('.msg-table .msg-hidden');
@@ -239,19 +462,23 @@
     }
     if (document.querySelectorAll('.msg-table .msg-hidden').length === 0) {
       btn.style.display = 'none';
+      if (hint) hint.style.display = 'block';
     }
   });
 })();
 </script>
 
 <script type="module">
-import { restore } from 'https://cdn.jsdelivr.net/npm/@orama/plugin-data-persistence@latest/+esm';
-import { search } from 'https://cdn.jsdelivr.net/npm/@orama/orama@latest/+esm';
+import { restore } from 'https://cdn.jsdelivr.net/npm/@orama/plugin-data-persistence@3.1.18/+esm';
+import { search } from 'https://cdn.jsdelivr.net/npm/@orama/orama@3.1.18/+esm';
 
 let db = null;
 let snippets = {};
+let loading = false;
 
-async function init() {
+async function ensureIndex() {
+  if (db || loading) return;
+  loading = true;
   try {
     const [indexResp, snippetsResp] = await Promise.all([
       fetch('/search-index.json'),
@@ -262,6 +489,10 @@ async function init() {
     db = await restore('json', data);
   } catch (e) {
     console.error('Search index load failed:', e);
+    const statusEl = document.getElementById('search-status');
+    if (statusEl) statusEl.textContent = 'Search unavailable. Browse by year or author instead.';
+  } finally {
+    loading = false;
   }
 }
 
@@ -278,16 +509,19 @@ async function doSearch() {
   const homeContent = document.getElementById('home-content');
 
   if (!term) {
-    resultsEl.style.display = 'none';
+    resultsEl.classList.remove('active');
     homeContent.style.display = '';
     return;
   }
 
   if (!db) {
-    statusEl.textContent = 'Loading search index...';
-    resultsEl.style.display = '';
-    homeContent.style.display = 'none';
-    return;
+    await ensureIndex();
+    if (!db) {
+      statusEl.textContent = 'Loading search index...';
+      resultsEl.classList.add('active');
+      homeContent.style.display = 'none';
+      return;
+    }
   }
 
   const start = performance.now();
@@ -300,14 +534,14 @@ async function doSearch() {
   const elapsed = (performance.now() - start).toFixed(1);
 
   statusEl.textContent = results.count + ' results in ' + elapsed + 'ms';
-  resultsEl.style.display = '';
+  resultsEl.classList.add('active');
   homeContent.style.display = 'none';
 
   hitsEl.replaceChildren();
 
   if (results.hits.length === 0) {
     const p = document.createElement('p');
-    p.style.color = 'var(--fg-muted)';
+    p.className = 'search-result-snippet';
     p.textContent = 'No messages found.';
     hitsEl.appendChild(p);
     return;
@@ -316,24 +550,21 @@ async function doSearch() {
   for (const hit of results.hits) {
     const doc = hit.document;
     const card = document.createElement('div');
-    card.className = 'card';
-    card.style.padding = '0.75rem 1rem';
+    card.className = 'card search-result';
 
     const titleRow = document.createElement('div');
-    titleRow.style.marginBottom = '0.25rem';
+    titleRow.className = 'search-result-title';
     const link = document.createElement('a');
     link.href = doc.url;
-    link.style.fontWeight = '600';
     link.textContent = doc.subject;
     const badge = document.createElement('span');
     badge.className = 'badge badge-' + doc.category;
     badge.textContent = doc.category;
-    badge.style.marginLeft = '0.5rem';
     titleRow.appendChild(link);
     titleRow.appendChild(badge);
 
     const meta = document.createElement('div');
-    meta.style.cssText = 'font-size: 0.85rem; color: var(--fg-dim); margin-bottom: 0.3rem;';
+    meta.className = 'search-result-meta';
     meta.textContent = doc.from_name + ' \u00B7 ' + doc.date;
 
     card.appendChild(titleRow);
@@ -342,7 +573,7 @@ async function doSearch() {
     const bodyText = snippets[doc.url] || '';
     if (bodyText) {
       const snippet = document.createElement('div');
-      snippet.style.cssText = 'font-size: 0.85rem; color: var(--fg-muted);';
+      snippet.className = 'search-result-snippet';
       snippet.textContent = truncate(bodyText, 200);
       card.appendChild(snippet);
     }
@@ -350,15 +581,22 @@ async function doSearch() {
   }
 }
 
-document.getElementById('search-input').addEventListener('input', doSearch);
+let searchTimer;
+function debouncedSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(doSearch, 200);
+}
+
+const searchInput = document.getElementById('search-input');
+
+searchInput.addEventListener('focus', ensureIndex, { once: true });
+searchInput.addEventListener('input', debouncedSearch);
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === '/' && document.activeElement !== document.getElementById('search-input')) {
+  if (e.key === '/' && document.activeElement !== searchInput) {
     e.preventDefault();
-    document.getElementById('search-input').focus();
+    searchInput.focus();
   }
 });
-
-init();
 </script>
 {% endblock %}

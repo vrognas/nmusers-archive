@@ -202,7 +202,7 @@ _CATEGORY_PATTERNS = {
     "admin": re.compile(
         r"\bunsubscri|\bsubscri|remove me|sign.?off\b|"
         r"\bvirus\b|\bspam\b|do not open|phishing|"
-        r"test message|please ignore",
+        r"test message|please ignore|linkedin",
         re.IGNORECASE,
     ),
     "workshop": re.compile(
@@ -324,10 +324,10 @@ def msg_url(row: dict) -> str:
 
 
 def msg_date_short(row: dict) -> str:
-    """Format date as 'Mar 15'."""
+    """Format date as 'Mar 15, 2006'."""
     if row["date"] is None:
         return "?"
-    return row["date"].strftime("%b %d")
+    return row["date"].strftime("%b %d, %Y")
 
 
 def msg_date_long(row: dict) -> str:
@@ -395,17 +395,20 @@ def build_site(output_dir: Path):
         yd["workshop"] = cats.get("workshop", 0)
         yd["announcement"] = cats.get("announcement", 0)
         yd["admin"] = cats.get("admin", 0)
-    recent = [r for r in reversed(rows) if r["date"] is not None]
+    recent = [r for r in reversed(rows) if r["date"] is not None][:500]
 
     source_counts = df.group_by("source").len().to_dicts()
     source_map = {r["source"]: r["len"] for r in source_counts}
+
+    year_min = df["year"].min()
+    year_max = df["year"].max()
 
     home_html = env.get_template("home.html").render(
         total_messages=len(rows),
         total_authors=df["from_name"].n_unique(),
         total_technical=df.filter(pl.col("category") == "technical").height,
-        year_min=df["year"].min(),
-        year_max=df["year"].max(),
+        year_min=year_min,
+        year_max=year_max,
         years=years_data,
         recent_messages=recent,
     )
@@ -415,6 +418,7 @@ def build_site(output_dir: Path):
     log.info("Generating search page...")
     search_html = env.get_template("search.html").render(
         total_messages=len(rows),
+        year_max=year_max,
     )
     search_dir = output_dir / "search"
     search_dir.mkdir()
@@ -476,16 +480,40 @@ def build_site(output_dir: Path):
             month_groups[key] = []
         month_groups[key].append(r)
 
+    import re
+    re_prefix = re.compile(r"^(Re:|RE:|Fwd:|FW:|Fw:|re:)\s*")
+
     for (year, month), msgs in month_groups.items():
         if year is None or month is None:
             continue
         month_dir = output_dir / str(year) / f"{month:02d}"
         month_dir.mkdir(parents=True, exist_ok=True)
 
+        # Group by thread_key, order threads by most recent message
+        thread_buckets: dict[str, list[dict]] = {}
+        for m in msgs:
+            tk = m["thread_key"]
+            if tk not in thread_buckets:
+                thread_buckets[tk] = []
+            thread_buckets[tk].append(m)
+        # Sort threads by latest message (descending), messages within thread by date (ascending)
+        sorted_threads = sorted(
+            thread_buckets.values(),
+            key=lambda t: t[-1]["date"] if t[-1]["date"] else t[0]["date"],
+            reverse=True,
+        )
+        # Mark is_reply: first message in each thread is not a reply
+        thread_sorted_msgs = []
+        for thread in sorted_threads:
+            for i, m in enumerate(thread):
+                m["is_reply"] = i > 0 and len(thread) > 1
+            thread_sorted_msgs.extend(thread)
+
         month_html = env.get_template("month.html").render(
             year=year,
             month_name=MONTH_NAMES[month],
-            messages=msgs,
+            messages=thread_sorted_msgs,
+            date_sorted=msgs,
         )
         (month_dir / "index.html").write_text(month_html, encoding="utf-8")
 
@@ -623,6 +651,34 @@ def build_site(output_dir: Path):
             messages=cat_msgs,
         )
         (cat_page_dir / "index.html").write_text(cat_html, encoding="utf-8")
+
+    # --- Threads index page ---
+    log.info("Generating threads page...")
+    thread_list = []
+    for tk, msgs in thread_groups.items():
+        if not msgs:
+            continue
+        dated = [m for m in msgs if m["date"] is not None]
+        if not dated:
+            continue
+        dated.sort(key=lambda m: m["date"])
+        participants = len(set(m["from_name"] for m in msgs))
+        thread_list.append({
+            "subject": dated[0]["subject"].replace("Re: ", "").replace("RE: ", "").strip(),
+            "subject_lower": tk,
+            "count": len(msgs),
+            "participants": participants,
+            "first_url": dated[0]["url"],
+            "last_date_short": dated[-1]["date_short"],
+            "last_date_sort": dated[-1]["date"].strftime("%Y-%m-%d"),
+        })
+    thread_list.sort(key=lambda t: t["last_date_sort"], reverse=True)
+
+    threads_dir = output_dir / "threads"
+    threads_dir.mkdir()
+    threads_html = env.get_template("threads.html").render(threads=thread_list)
+    (threads_dir / "index.html").write_text(threads_html, encoding="utf-8")
+    log.info(f"Generated threads page with {len(thread_list)} threads")
 
     # --- Search index data ---
     log.info("Exporting search data...")

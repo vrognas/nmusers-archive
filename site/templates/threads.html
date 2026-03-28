@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Threads &mdash; NMusers Archive{% endblock %}
+
+{% block content %}
+<h1>Threads</h1>
+<p class="page-desc">{{ threads | length }} discussion threads, sorted by most recent activity.</p>
+
+<label for="thread-search" class="sr-only">Filter threads</label>
+<input type="text" id="thread-search" class="author-search" placeholder="Filter threads..." autocomplete="off">
+
+<div class="sort-controls">
+  <span class="sort-label">Sort by:</span>
+  <button class="sort-btn active" data-sort="recent" aria-pressed="true">Most recent</button>
+  <button class="sort-btn" data-sort="count" aria-pressed="false">Most messages</button>
+  <button class="sort-btn" data-sort="name" aria-pressed="false">Subject A&ndash;Z</button>
+</div>
+
+<div class="author-count-display" id="thread-count">Showing all {{ threads | length }}</div>
+
+<table class="msg-table" id="thread-table" aria-label="Discussion threads">
+  <thead>
+    <tr>
+      <th class="subject-col">Thread</th>
+      <th class="date-col">Messages</th>
+      <th class="date-col">Latest</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in threads %}
+    <tr data-subject="{{ t.subject_lower }}" data-count="{{ t.count }}" data-latest="{{ t.last_date_sort }}">
+      <td class="subject-col">
+        <a href="{{ t.first_url }}">{{ t.subject }}</a>
+        {% if t.participants > 1 %}
+        <span class="thread-participants">&mdash; {{ t.participants }} people</span>
+        {% endif %}
+      </td>
+      <td class="date-col count-col">{{ t.count }}</td>
+      <td class="date-col">{{ t.last_date_short }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var table = document.getElementById("thread-table");
+  var tbody = table.querySelector("tbody");
+  var allRows = Array.from(tbody.children);
+  var search = document.getElementById("thread-search");
+  var countDisplay = document.getElementById("thread-count");
+  var btns = document.querySelectorAll(".sort-btn");
+  var total = allRows.length;
+
+  function sortRows(key) {
+    var sorted;
+    if (key === "recent") {
+      sorted = allRows.slice().sort(function (a, b) {
+        return b.dataset.latest.localeCompare(a.dataset.latest);
+      });
+    } else if (key === "count") {
+      sorted = allRows.slice().sort(function (a, b) {
+        return +b.dataset.count - +a.dataset.count;
+      });
+    } else if (key === "name") {
+      sorted = allRows.slice().sort(function (a, b) {
+        return a.dataset.subject.localeCompare(b.dataset.subject);
+      });
+    }
+    sorted.forEach(function (el) { tbody.appendChild(el); });
+  }
+
+  function filterRows() {
+    var query = search.value.toLowerCase();
+    var visible = 0;
+    allRows.forEach(function (row) {
+      var match = !query || row.dataset.subject.indexOf(query) !== -1;
+      row.style.display = match ? "" : "none";
+      if (match) visible++;
+    });
+    countDisplay.textContent = query
+      ? "Showing " + visible + " of " + total
+      : "Showing all " + total;
+  }
+
+  btns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      btns.forEach(function (b) {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
+      btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
+      sortRows(btn.dataset.sort);
+    });
+  });
+
+  search.addEventListener("input", filterRows);
+  sortRows("recent");
+})();
+</script>
+{% endblock %}

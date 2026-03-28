@@ -3,10 +3,12 @@
 {% block description %}{{ subject }} — message from {{ from_name }} on the NMusers mailing list, {{ date_long }}.{% endblock %}
 
 {% block content %}
-<nav class="breadcrumb">
-  <a href="/">Home</a><span class="sep">/</span>
-  <a href="/{{ year }}/">{{ year }}</a><span class="sep">/</span>
-  <a href="/{{ year }}/{{ month_num }}/">{{ month_name }}</a>
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <ol role="list">
+    <li><a href="/">Home</a><span class="sep">/</span></li>
+    <li><a href="/{{ year }}/">{{ year }}</a><span class="sep">/</span></li>
+    <li><a href="/{{ year }}/{{ month_num }}/">{{ month_name }}</a></li>
+  </ol>
 </nav>
 
 <article>
@@ -25,10 +27,10 @@
 {% if thread_messages %}
 <div class="thread-list">
   <h3>Related messages (same thread)</h3>
-  <table class="msg-table">
+  <table class="msg-table" aria-label="Related messages in this thread">
     <tbody>
       {% for t in thread_messages %}
-      <tr{% if t.is_current %} style="background: var(--bg-hover);"{% endif %}>
+      <tr{% if t.is_current %} class="thread-current"{% endif %}>
         <td class="date-col">{{ t.date_short }}</td>
         <td class="author-col">{{ t.from_name }}</td>
         <td class="subject-col">

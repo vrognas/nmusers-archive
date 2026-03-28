@@ -14,19 +14,19 @@
 <div class="card">
   <h2>Data Sources</h2>
   <p>This archive combines three sources to provide comprehensive coverage:</p>
-  <ul style="margin: 0.5rem 0 0 1.5rem;">
+  <ul class="content-list">
     <li><strong>mail-archive.com</strong> (2007&ndash;present) &mdash; {{ count_mail_archive | commafy }} messages</li>
     <li><strong>cognigencorp.com</strong> via Wayback Machine (1995&ndash;2006) &mdash; {{ count_cognigencorp | commafy }} messages</li>
     <li><strong>cognigen.com pipermail</strong> via Wayback Machine (2006&ndash;2021) &mdash; {{ count_pipermail | commafy }} messages</li>
   </ul>
-  <p style="margin-top: 0.5rem;">After deduplication: <strong>{{ total_messages | commafy }}</strong> unique messages.</p>
+  <p class="card-note">After deduplication: <strong>{{ total_messages | commafy }}</strong> unique messages.</p>
 </div>
 
 <div class="card">
   <h2>Subscribe</h2>
   <p>To subscribe to NMusers, send the following in the <em>body</em> (not the subject line) of an email to <a href="mailto:majordomo@globomaxnm.com">majordomo@globomaxnm.com</a>:</p>
   <div class="msg-body">subscribe nmusers</div>
-  <p style="margin-top: 0.75rem;">Alternatively, send a request to <a href="mailto:nmusers-request@iconplc.com">nmusers-request@iconplc.com</a>.</p>
+  <p class="card-note">Alternatively, send a request to <a href="mailto:nmusers-request@iconplc.com">nmusers-request@iconplc.com</a>.</p>
   <p>Once subscribed, contribute to the discussion by emailing <a href="mailto:nmusers@globomaxnm.com">nmusers@globomaxnm.com</a>.</p>
 </div>
 
@@ -38,12 +38,12 @@
 
 <div class="card">
   <h2>Posting Guidelines</h2>
-  <ul style="margin: 0.5rem 0 0 1.5rem;">
+  <ul class="content-list">
     <li>Limit messages to 40,000 characters (including quoted reply history &mdash; truncate if too long)</li>
     <li>No attachments</li>
     <li>Only plain text and links</li>
   </ul>
-  <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--fg-muted);">
+  <p class="card-footnote">
     <a href="https://www.mail-archive.com/nmusers@globomaxnm.com/msg07406.html">Reference (2019-03-15)</a>
   </p>
 </div>
@@ -51,7 +51,7 @@
 <div class="card">
   <h2>Search Tips</h2>
   <p>The <a href="/search/">search</a> supports full-text queries across all archived messages. Tips:</p>
-  <ul style="margin: 0.5rem 0 0 1.5rem;">
+  <ul class="content-list">
     <li>Phrase search: <code>"battle royale"</code></li>
     <li>Boolean operators: <code>+Jeff -Breidenbach</code>, <code>(dueling OR dualing) AND banjos</code></li>
     <li>The search covers subject lines, author names, and message bodies.</li>

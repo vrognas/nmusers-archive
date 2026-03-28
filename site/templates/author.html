@@ -2,16 +2,18 @@
 {% block title %}{{ author_name }} &mdash; NMusers Archive{% endblock %}
 
 {% block content %}
-<nav class="breadcrumb">
-  <a href="/">Home</a><span class="sep">/</span>
-  <a href="/authors/">Authors</a><span class="sep">/</span>
-  {{ author_name }}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <ol role="list">
+    <li><a href="/">Home</a><span class="sep">/</span></li>
+    <li><a href="/authors/">Authors</a><span class="sep">/</span></li>
+    <li aria-current="page">{{ author_name }}</li>
+  </ol>
 </nav>
 
 <h1>{{ author_name }}</h1>
-<p style="color: var(--fg-dim); margin-bottom: 1rem;">{{ messages | length }} messages, {{ year_min }}&ndash;{{ year_max }}</p>
+<p class="page-desc">{{ messages | length }} messages, {{ year_min }}&ndash;{{ year_max }}</p>
 
-<table class="msg-table">
+<table class="msg-table" aria-label="Messages by {{ author_name }}">
   <thead>
     <tr>
       <th class="date-col">Date</th>
