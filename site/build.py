@@ -165,6 +165,13 @@ def load_data() -> pl.DataFrame:
         .alias("from_name"),
     )
 
+    # Strip [NMusers] tag from display subject
+    df = df.with_columns(
+        pl.col("subject")
+        .str.replace(r"\[NMusers\]\s*", "")
+        .alias("subject"),
+    )
+
     df = df.with_columns(
         pl.col("date").dt.year().alias("year"),
         pl.col("date").dt.month().alias("month"),

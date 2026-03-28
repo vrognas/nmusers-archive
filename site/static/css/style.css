@@ -9,6 +9,8 @@
   --bg-card: #3c3836;
   --bg-hover: #504945;
   --fg: #ebdbb2;
+  --fg-nav: #ebdbb2;
+  --fg-nav-hover: #a89984;
   --fg-dim: #a89984;
   --fg-muted: #928374;
   --accent: #8cbd7a;
@@ -25,24 +27,26 @@
 }
 
 [data-theme="light"] {
-  --bg: #fbf1c7;
-  --bg-alt: #f2e5bc;
-  --bg-card: #ebdbb2;
-  --bg-hover: #d5c4a1;
-  --fg: #3c3836;
-  --fg-dim: #665c54;
-  --fg-muted: #7c6f64;
+  --bg: #ffffff;
+  --bg-alt: #f1f1ec;
+  --bg-card: #f2f2f2;
+  --bg-hover: #e8e8e8;
+  --fg: #242424;
+  --fg-nav: #464646;
+  --fg-nav-hover: #6e6353;
+  --fg-dim: #555555;
+  --fg-muted: #777777;
   --accent: #427b58;
   --accent-hover: #79740e;
   --link: #427b58;
   --link-hover: #79740e;
-  --border: #bdae93;
+  --border: #dddddd;
   --badge-technical: #076678;
   --badge-job: #b57614;
   --badge-workshop: #8f3f71;
   --badge-announcement: #427b58;
-  --code-bg: #f2e5bc;
-  --shadow: rgba(0, 0, 0, 0.1);
+  --code-bg: #f7f7f7;
+  --shadow: rgba(0, 0, 0, 0.08);
 }
 
 /* Reset & base */
@@ -113,10 +117,10 @@ main {
 .navbar-brand {
   font-weight: 700;
   font-size: 1.1rem;
-  color: var(--fg);
+  color: var(--fg-nav);
   white-space: nowrap;
 }
-.navbar-brand:hover { color: var(--accent); text-decoration: none; }
+.navbar-brand:hover { color: var(--fg-nav-hover); text-decoration: none; }
 
 .navbar-nav {
   display: flex;
@@ -126,10 +130,10 @@ main {
 }
 
 .navbar-nav a {
-  color: var(--fg-dim);
+  color: var(--fg-nav);
   font-size: 0.9rem;
 }
-.navbar-nav a:hover { color: var(--accent); text-decoration: none; }
+.navbar-nav a:hover { color: var(--fg-nav-hover); text-decoration: none; }
 
 #theme-toggle {
   background: none;

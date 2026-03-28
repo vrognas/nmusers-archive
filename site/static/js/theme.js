@@ -4,16 +4,16 @@
   function getPreferred() {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return stored;
-    return window.matchMedia("(prefers-color-scheme: light)").matches
-      ? "light"
-      : "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   }
 
   function apply(theme) {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem(STORAGE_KEY, theme);
     const btn = document.getElementById("theme-toggle");
-    if (btn) btn.textContent = theme === "dark" ? "Light" : "Dark";
+    if (btn) btn.textContent = theme === "light" ? "Dark" : "Light";
   }
 
   // Apply immediately to avoid flash

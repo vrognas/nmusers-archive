@@ -27,6 +27,34 @@ logging.basicConfig(
 )
 log = logging.getLogger("parse_cognigen")
 
+def read_html(filepath: Path) -> str:
+    """Read an HTML file with charset detection.
+
+    Checks the HTML <meta> charset declaration first, then falls back
+    to trying UTF-8 and Latin-1.
+    """
+    raw = filepath.read_bytes()
+
+    # Check for <meta charset="..."> or <meta content="text/html; charset=...">
+    head = raw[:2048].lower()
+    charset_match = (
+        re.search(rb'charset=["\']?([a-z0-9_-]+)', head)
+        or re.search(rb'encoding=["\']?([a-z0-9_-]+)', head)
+    )
+    if charset_match:
+        charset = charset_match.group(1).decode("ascii")
+        try:
+            return raw.decode(charset)
+        except (UnicodeDecodeError, LookupError):
+            pass
+
+    # Try UTF-8 strictly, fall back to Latin-1 (which never fails)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
+
+
 DISCLAIMER_PATTERNS = [
     re.compile(r"ICON plc made the following annotations\..*$", re.DOTALL),
     re.compile(r"This e-?mail (transmission )?may contain confidential.*$", re.DOTALL),
@@ -216,7 +244,7 @@ def parse_old_format_page(filepath: Path) -> list[dict]:
     horizontal rules, with From/Subject/Date headers inline.
     """
     try:
-        html = filepath.read_text(encoding="utf-8", errors="replace")
+        html = read_html(filepath)
     except OSError:
         return []
 
@@ -413,7 +441,7 @@ def parse_pipermail_page(filepath: Path) -> dict | None:
     rather than regex on body text.
     """
     try:
-        html = filepath.read_text(encoding="utf-8", errors="replace")
+        html = read_html(filepath)
     except OSError:
         return None
 

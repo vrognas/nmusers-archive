@@ -17,6 +17,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from parse_cognigen import read_html
+
 import polars as pl
 from bs4 import BeautifulSoup
 
@@ -123,7 +125,7 @@ def _extract_thread_parent(soup: BeautifulSoup) -> int | None:
 def parse_message(filepath: Path) -> dict | None:
     """Parse a single HTML file into a flat dict."""
     try:
-        html = filepath.read_text(encoding="utf-8", errors="replace")
+        html = read_html(filepath)
     except OSError as exc:
         log.warning(f"Cannot read {filepath.name}: {exc}")
         return None

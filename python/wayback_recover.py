@@ -136,7 +136,7 @@ async def download_snapshot(
                 log.warning(f"{filename} HTTP {response.status_code}")
                 return {"url": entry["url"], "status": "error"}
 
-            filepath.write_text(response.text, encoding="utf-8")
+            filepath.write_bytes(response.content)
             await asyncio.sleep(1.5)  # Be polite to the Wayback Machine
             return {"url": entry["url"], "status": "downloaded"}
 

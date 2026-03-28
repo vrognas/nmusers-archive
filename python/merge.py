@@ -36,6 +36,15 @@ SOURCE_FILES = {
 SHARED_COLUMNS = ["date", "from_name", "subject", "category", "body_clean", "source"]
 
 
+def clean_from_name(s: str) -> str:
+    """Clean author names: strip ANSI escapes, collapse whitespace."""
+    # Remove ANSI escape sequences (e.g. \x1b(B)
+    s = re.sub(r"\x1b(?:\[[0-9;]*[A-Za-z]|\([A-Za-z])", "", s)
+    # Collapse any internal newlines/whitespace runs into a single space
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
 def load_source(name: str, path: Path) -> pl.DataFrame | None:
     if not path.exists():
         log.warning(f"{name}: {path} not found, skipping")
@@ -50,6 +59,13 @@ def load_source(name: str, path: Path) -> pl.DataFrame | None:
     for col in SHARED_COLUMNS:
         if col not in df.columns:
             df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
+
+    # Strip ANSI escape sequences from author names
+    df = df.with_columns(
+        pl.col("from_name")
+        .map_elements(clean_from_name, return_dtype=pl.Utf8)
+        .alias("from_name")
+    )
 
     return df.select(SHARED_COLUMNS)
 

@@ -94,7 +94,7 @@ async def download_message(
                 log.warning(f"msg{message_number:05d} HTTP {response.status_code}")
                 return {"id": message_number, "status": "error"}
 
-            filepath.write_text(response.text, encoding="utf-8")
+            filepath.write_bytes(response.content)
             await asyncio.sleep(0.5)
             return {"id": message_number, "status": "downloaded"}
 

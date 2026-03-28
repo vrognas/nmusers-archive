@@ -8,14 +8,21 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: update-archive
+  cancel-in-progress: true
+
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Restore cached raw HTML
         uses: actions/cache@v4
@@ -38,13 +45,14 @@ jobs:
 
       - name: Commit and push if data changed
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/messages.parquet data/messages_all.parquet
           if git diff --cached --quiet; then
             echo "No new messages found"
           else
-            count=$(uv run python -c "import polars as pl; print(len(pl.read_parquet('data/messages_all.parquet')))")
+            count=$(uv run python -c "import polars as pl; print(len(pl.read_parquet('data/messages_all.parquet')))" || echo "unknown")
             git commit -m "data: update archive (${count} messages)"
             git push
           fi
