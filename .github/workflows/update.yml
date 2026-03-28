@@ -1,0 +1,50 @@
+name: Update archive
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # Daily at 06:00 UTC
+  workflow_dispatch:       # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Restore cached raw HTML
+        uses: actions/cache@v4
+        with:
+          path: data/raw/
+          key: raw-html-${{ github.run_id }}
+          restore-keys: raw-html-
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Scrape new messages
+        run: uv run python python/scrape.py --workers 2
+
+      - name: Parse messages
+        run: uv run python python/parse.py
+
+      - name: Merge and deduplicate
+        run: uv run python python/merge.py
+
+      - name: Commit and push if data changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/messages.parquet data/messages_all.parquet
+          if git diff --cached --quiet; then
+            echo "No new messages found"
+          else
+            count=$(uv run python -c "import polars as pl; print(len(pl.read_parquet('data/messages_all.parquet')))")
+            git commit -m "data: update archive (${count} messages)"
+            git push
+          fi
