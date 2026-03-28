@@ -3,14 +3,97 @@
 
 {% block content %}
 <h1>Contributors</h1>
-<p style="color: var(--fg-dim); margin-bottom: 1.5rem;">{{ authors | length }} people have contributed to the NMusers mailing list.</p>
+<p style="color: var(--fg-dim); margin-bottom: 1rem;">{{ authors | length }} people have contributed to the NMusers mailing list.</p>
 
-<ul class="author-list">
+<input type="text" id="author-search" class="author-search" placeholder="Filter by name..." autocomplete="off">
+
+<div class="sort-controls">
+  <span class="sort-label">Sort by:</span>
+  <button class="sort-btn active" data-sort="count-desc">Most active</button>
+  <button class="sort-btn" data-sort="name-asc">Name A–Z</button>
+  <button class="sort-btn" data-sort="name-desc">Name Z–A</button>
+  <button class="sort-btn" data-sort="recent">Most recent</button>
+</div>
+
+<div class="author-count-display" id="author-count">Showing all {{ authors | length }}</div>
+
+<ul class="author-list" id="author-list">
   {% for a in authors %}
-  <li>
-    <a href="/authors/{{ a.slug }}/">{{ a.name }}</a>
-    <span class="author-count">({{ a.count }})</span>
+  <li data-name="{{ a.name | lower }}" data-count="{{ a.count }}" data-first="{{ a.first_year or 0 }}" data-last="{{ a.last_year or 0 }}">
+    <div class="author-entry">
+      <div class="author-info">
+        <a href="/authors/{{ a.slug }}/">{{ a.name }}</a>
+        <span class="author-period">{% if a.first_year %}{{ a.first_year }}{% if a.first_year != a.last_year %}–{{ a.last_year }}{% endif %}{% endif %}</span>
+      </div>
+      <div class="author-bar-wrap">
+        <div class="author-bar-track">
+          <div class="author-bar" style="width: {{ (a.count / max_count * 100) | round(1) }}%"></div>
+        </div>
+        <span class="author-count">{{ a.count }}</span>
+      </div>
+    </div>
   </li>
   {% endfor %}
 </ul>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var list = document.getElementById("author-list");
+  var items = Array.from(list.children);
+  var search = document.getElementById("author-search");
+  var countDisplay = document.getElementById("author-count");
+  var btns = document.querySelectorAll(".sort-btn");
+  var total = items.length;
+
+  function sortBy(key) {
+    var sorted;
+    if (key === "name-asc") {
+      sorted = items.slice().sort(function (a, b) {
+        return a.dataset.name.localeCompare(b.dataset.name);
+      });
+    } else if (key === "name-desc") {
+      sorted = items.slice().sort(function (a, b) {
+        return b.dataset.name.localeCompare(a.dataset.name);
+      });
+    } else if (key === "count-desc") {
+      sorted = items.slice().sort(function (a, b) {
+        return +b.dataset.count - +a.dataset.count;
+      });
+    } else if (key === "recent") {
+      sorted = items.slice().sort(function (a, b) {
+        return +b.dataset.last - +a.dataset.last || +b.dataset.count - +a.dataset.count;
+      });
+    }
+    sorted.forEach(function (el) { list.appendChild(el); });
+  }
+
+  function filterList() {
+    var query = search.value.toLowerCase();
+    var visible = 0;
+    items.forEach(function (el) {
+      var match = !query || el.dataset.name.indexOf(query) !== -1;
+      el.style.display = match ? "" : "none";
+      if (match) visible++;
+    });
+    countDisplay.textContent = query
+      ? "Showing " + visible + " of " + total
+      : "Showing all " + total;
+  }
+
+  btns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      btns.forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      sortBy(btn.dataset.sort);
+    });
+  });
+
+  search.addEventListener("input", filterList);
+
+  // Default: most active
+  sortBy("count-desc");
+})();
+</script>
 {% endblock %}

@@ -215,6 +215,7 @@ main {
 .msg-table .date-col { white-space: nowrap; width: 100px; color: var(--fg-dim); }
 .msg-table .author-col { white-space: nowrap; width: 160px; }
 .msg-table .subject-col { }
+.msg-table .cat-col { white-space: nowrap; width: 100px; text-align: center; }
 
 /* Category badges */
 .badge {
@@ -315,19 +316,127 @@ main {
   font-size: 0.85rem;
 }
 
+/* Sort controls */
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+.sort-label {
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+.sort-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+.sort-btn:hover { border-color: var(--accent); color: var(--accent); }
+.sort-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.cat-toggle {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: inherit;
+  opacity: 0.4;
+}
+.cat-toggle.active { opacity: 1; color: #fff; }
+.cat-toggle[data-cat="technical"].active { background: var(--badge-technical); border-color: var(--badge-technical); }
+.cat-toggle[data-cat="job"].active { background: var(--badge-job); border-color: var(--badge-job); }
+.cat-toggle[data-cat="workshop"].active { background: var(--badge-workshop); border-color: var(--badge-workshop); }
+.cat-toggle[data-cat="announcement"].active { background: var(--badge-announcement); border-color: var(--badge-announcement); }
+.cat-toggle[data-cat="admin"].active { background: var(--fg-muted); border-color: var(--fg-muted); }
+.cat-toggle:hover { opacity: 0.8; }
+
+/* Author search */
+.author-search {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+.author-search:focus { outline: none; border-color: var(--accent); }
+.author-search::placeholder { color: var(--fg-muted); }
+
+.author-count-display {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  margin-bottom: 0.75rem;
+}
+
 /* Author index */
 .author-list {
-  columns: 2;
-  column-gap: 2rem;
+  list-style: none;
 }
 .author-list li {
-  list-style: none;
-  padding: 0.25rem 0;
-  break-inside: avoid;
+  padding: 0.3rem 0;
+}
+.author-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.author-info {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.author-info a {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.author-period {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.author-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  width: 180px;
+  position: relative;
+}
+.author-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-hover);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.author-bar {
+  height: 6px;
+  background: var(--accent);
+  border-radius: 3px;
+  min-width: 2px;
 }
 .author-count {
   color: var(--fg-muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  min-width: 2rem;
+  text-align: right;
 }
 
 /* Search page (Pagefind overrides) */
@@ -342,6 +451,39 @@ main {
   --pagefind-ui-border-radius: 6px;
   --pagefind-ui-font: 'Source Sans 3', sans-serif;
 }
+
+/* Home search */
+.home-search {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+.home-search-input {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+.home-search-input:focus { outline: none; border-color: var(--accent); }
+.home-search-input::placeholder { color: var(--fg-muted); }
+.home-search-btn {
+  padding: 0.6rem 1.25rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.home-search-btn:hover { background: var(--accent-hover); }
+
+.msg-hidden { display: none; }
 
 /* Breadcrumbs */
 .breadcrumb {

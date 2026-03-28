@@ -3,10 +3,20 @@
 
 {% block content %}
 <h1>NMusers Mailing List Archive</h1>
-<p style="color: var(--fg-dim); margin-bottom: 1.5rem;">
+<p style="color: var(--fg-dim); margin-bottom: 1rem;">
   Searchable archive of {{ total_messages | commafy }} messages from the NONMEM users mailing list, spanning {{ year_min }}&ndash;{{ year_max }}.
 </p>
 
+<div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
+  <input type="text" id="search-input" placeholder="Search {{ total_messages | commafy }} messages..." class="home-search-input" autocomplete="off">
+</div>
+
+<div id="search-results" style="display: none; margin-bottom: 2rem;">
+  <div id="search-status" style="color: var(--fg-muted); font-size: 0.85rem; margin-bottom: 0.75rem;"></div>
+  <div id="search-hits"></div>
+</div>
+
+<div id="home-content">
 <div class="stats-grid">
   <div class="stat-card">
     <span class="number">{{ total_messages | commafy }}</span>
@@ -26,33 +36,329 @@
   </div>
 </div>
 
-<h2>Browse by Year</h2>
-<div class="year-grid">
-  {% for year in years %}
-  <a href="/{{ year.year }}/" class="year-link">{{ year.year }} <span style="font-weight:400; color: var(--fg-muted); font-size: 0.8rem;">({{ year.count }})</span></a>
-  {% endfor %}
+<h2>Messages Over Time</h2>
+<div class="card" style="padding: 1rem;">
+  <canvas id="year-chart" height="120"></canvas>
 </div>
 
-<h2>Recent Messages</h2>
+<h2>Messages</h2>
+<div class="sort-controls">
+  <span class="sort-label">Category:</span>
+  <button class="cat-toggle active" data-cat="technical">Technical</button>
+  <button class="cat-toggle active" data-cat="job">Job</button>
+  <button class="cat-toggle active" data-cat="workshop">Workshop</button>
+  <button class="cat-toggle active" data-cat="announcement">Announcement</button>
+  <button class="cat-toggle active" data-cat="admin">Admin</button>
+</div>
+<div class="sort-controls">
+  <span class="sort-label">Year:</span>
+  <button class="sort-btn active" data-year="all">All</button>
+  {% for year in years | reverse %}
+  <button class="sort-btn" data-year="{{ year.year }}">{{ year.year }}</button>
+  {% endfor %}
+</div>
 <table class="msg-table">
   <thead>
     <tr>
       <th class="date-col">Date</th>
       <th class="author-col">Author</th>
       <th class="subject-col">Subject</th>
+      <th class="cat-col">Category</th>
     </tr>
   </thead>
   <tbody>
     {% for msg in recent_messages %}
-    <tr>
+    <tr data-cat="{{ msg.category }}" data-year="{{ msg.year }}"{% if loop.index > 30 %} class="msg-hidden"{% endif %}>
       <td class="date-col">{{ msg.date_short }}</td>
       <td class="author-col"><a href="/authors/{{ msg.author_slug }}/">{{ msg.from_name }}</a></td>
       <td class="subject-col">
         <a href="{{ msg.url }}">{{ msg.subject }}</a>
+      </td>
+      <td class="cat-col">
         <span class="badge badge-{{ msg.category }}">{{ msg.category }}</span>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+{% if recent_messages | length > 30 %}
+<div style="text-align: center; margin-top: 1rem;">
+  <button id="load-more" class="sort-btn" style="padding: 0.5rem 2rem;">Load more</button>
+</div>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var catBtns = document.querySelectorAll(".cat-toggle");
+  var yearBtns = document.querySelectorAll(".sort-btn[data-year]");
+  var rows = document.querySelectorAll(".msg-table tbody tr");
+  var activeYear = "all";
+
+  function getActiveCats() {
+    var cats = [];
+    catBtns.forEach(function (b) { if (b.classList.contains("active")) cats.push(b.dataset.cat); });
+    return cats;
+  }
+
+  function filterRows() {
+    var cats = getActiveCats();
+    rows.forEach(function (row) {
+      var catMatch = cats.indexOf(row.dataset.cat) !== -1;
+      var yearMatch = activeYear === "all" || row.dataset.year === activeYear;
+      row.style.display = (catMatch && yearMatch) ? "" : "none";
+    });
+  }
+
+  catBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      btn.classList.toggle("active");
+      rows.forEach(function (r) { r.classList.remove("msg-hidden"); });
+      filterRows();
+    });
+  });
+
+  yearBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      yearBtns.forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      activeYear = btn.dataset.year;
+      rows.forEach(function (r) { r.classList.remove("msg-hidden"); });
+      filterRows();
+    });
+  });
+})();
+</script>
+<script>
+// Year chart with NONMEM release markers
+(function () {
+  var data = [{% for y in years %}{ year: {{ y.year }}, count: {{ y.count }}, technical: {{ y.technical }}, job: {{ y.job }}, workshop: {{ y.workshop }}, announcement: {{ y.announcement }}, admin: {{ y.admin }} }{% if not loop.last %},{% endif %}{% endfor %}];
+  var releases = [
+    { year: 1998, label: "V" },
+    { year: 2006, label: "VI" },
+    { year: 2009, label: "7.1" },
+    { year: 2010, label: "7.1.2" },
+    { year: 2011, label: "7.2" },
+    { year: 2013, label: "7.3" },
+    { year: 2017, label: "7.4" },
+    { year: 2018, label: "7.4.2/3" },
+    { year: 2019, label: "7.4.4" },
+    { year: 2020, label: "7.5" },
+    { year: 2022, label: "7.5.1" },
+    { year: 2024, label: "7.6" },
+  ];
+
+  var canvas = document.getElementById('year-chart');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  var w = canvas.parentElement.clientWidth - 32;
+  var h = 180;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.scale(dpr, dpr);
+
+  var maxCount = Math.max.apply(null, data.map(function (d) { return d.count; }));
+  var barW = Math.max(2, (w - data.length * 2) / data.length);
+  var gap = 2;
+  var chartTop = 28;
+  var chartH = h - chartTop - 16;
+  var style = getComputedStyle(document.documentElement);
+  var accentColor = style.getPropertyValue('--accent').trim();
+  var mutedColor = style.getPropertyValue('--fg-muted').trim();
+  var borderColor = style.getPropertyValue('--border').trim();
+
+  var yearMin = data[0].year;
+
+  // Draw release markers first (behind bars)
+  releases.forEach(function (r, ri) {
+    var idx = r.year - yearMin;
+    if (idx < 0 || idx >= data.length) return;
+    var x = idx * (barW + gap) + barW / 2;
+    ctx.strokeStyle = borderColor;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, chartTop);
+    ctx.lineTo(x, chartTop + chartH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Label at top, staggered to avoid overlap
+    ctx.fillStyle = mutedColor;
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'center';
+    var labelY = (ri % 2 === 0) ? chartTop - 14 : chartTop - 4;
+    ctx.fillText('NM ' + r.label, x, labelY);
+  });
+
+  // Category colors (match CSS badge colors)
+  var catColors = {
+    technical: style.getPropertyValue('--badge-technical').trim(),
+    workshop: style.getPropertyValue('--badge-workshop').trim(),
+    job: style.getPropertyValue('--badge-job').trim(),
+    announcement: style.getPropertyValue('--badge-announcement').trim(),
+    admin: mutedColor,
+  };
+  var catOrder = ['technical', 'workshop', 'job', 'announcement', 'admin'];
+
+  // Draw stacked bars
+  data.forEach(function (d, i) {
+    var x = i * (barW + gap);
+    var baseY = chartTop + chartH;
+    catOrder.forEach(function (cat) {
+      var segH = (d[cat] / maxCount) * chartH;
+      if (segH < 0.5) return;
+      baseY -= segH;
+      ctx.fillStyle = catColors[cat];
+      ctx.fillRect(x, baseY, barW, segH);
+    });
+    // Year labels every 5 years
+    if (d.year % 5 === 0) {
+      ctx.fillStyle = mutedColor;
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(d.year, x + barW / 2, h - 2);
+    }
+  });
+})();
+
+// Load more
+(function () {
+  var btn = document.getElementById('load-more');
+  if (!btn) return;
+  var batch = 30;
+  btn.addEventListener('click', function () {
+    var hidden = document.querySelectorAll('.msg-table .msg-hidden');
+    var shown = 0;
+    for (var i = 0; i < hidden.length && shown < batch; i++) {
+      hidden[i].classList.remove('msg-hidden');
+      shown++;
+    }
+    if (document.querySelectorAll('.msg-table .msg-hidden').length === 0) {
+      btn.style.display = 'none';
+    }
+  });
+})();
+</script>
+
+<script type="module">
+import { restore } from 'https://cdn.jsdelivr.net/npm/@orama/plugin-data-persistence@latest/+esm';
+import { search } from 'https://cdn.jsdelivr.net/npm/@orama/orama@latest/+esm';
+
+let db = null;
+let snippets = {};
+
+async function init() {
+  try {
+    const [indexResp, snippetsResp] = await Promise.all([
+      fetch('/search-index.json'),
+      fetch('/search-snippets.json'),
+    ]);
+    const data = await indexResp.json();
+    snippets = await snippetsResp.json();
+    db = await restore('json', data);
+  } catch (e) {
+    console.error('Search index load failed:', e);
+  }
+}
+
+function truncate(text, maxLen) {
+  if (!text || text.length <= maxLen) return text || '';
+  return text.substring(0, maxLen) + '...';
+}
+
+async function doSearch() {
+  const term = document.getElementById('search-input').value.trim();
+  const resultsEl = document.getElementById('search-results');
+  const hitsEl = document.getElementById('search-hits');
+  const statusEl = document.getElementById('search-status');
+  const homeContent = document.getElementById('home-content');
+
+  if (!term) {
+    resultsEl.style.display = 'none';
+    homeContent.style.display = '';
+    return;
+  }
+
+  if (!db) {
+    statusEl.textContent = 'Loading search index...';
+    resultsEl.style.display = '';
+    homeContent.style.display = 'none';
+    return;
+  }
+
+  const start = performance.now();
+  const results = await search(db, {
+    term,
+    tolerance: Math.min(Math.floor(term.length / 4), 2),
+    boost: { subject: 5, from_name: 3 },
+    limit: 50,
+  });
+  const elapsed = (performance.now() - start).toFixed(1);
+
+  statusEl.textContent = results.count + ' results in ' + elapsed + 'ms';
+  resultsEl.style.display = '';
+  homeContent.style.display = 'none';
+
+  hitsEl.replaceChildren();
+
+  if (results.hits.length === 0) {
+    const p = document.createElement('p');
+    p.style.color = 'var(--fg-muted)';
+    p.textContent = 'No messages found.';
+    hitsEl.appendChild(p);
+    return;
+  }
+
+  for (const hit of results.hits) {
+    const doc = hit.document;
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.padding = '0.75rem 1rem';
+
+    const titleRow = document.createElement('div');
+    titleRow.style.marginBottom = '0.25rem';
+    const link = document.createElement('a');
+    link.href = doc.url;
+    link.style.fontWeight = '600';
+    link.textContent = doc.subject;
+    const badge = document.createElement('span');
+    badge.className = 'badge badge-' + doc.category;
+    badge.textContent = doc.category;
+    badge.style.marginLeft = '0.5rem';
+    titleRow.appendChild(link);
+    titleRow.appendChild(badge);
+
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size: 0.85rem; color: var(--fg-dim); margin-bottom: 0.3rem;';
+    meta.textContent = doc.from_name + ' \u00B7 ' + doc.date;
+
+    card.appendChild(titleRow);
+    card.appendChild(meta);
+
+    const bodyText = snippets[doc.url] || '';
+    if (bodyText) {
+      const snippet = document.createElement('div');
+      snippet.style.cssText = 'font-size: 0.85rem; color: var(--fg-muted);';
+      snippet.textContent = truncate(bodyText, 200);
+      card.appendChild(snippet);
+    }
+    hitsEl.appendChild(card);
+  }
+}
+
+document.getElementById('search-input').addEventListener('input', doSearch);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement !== document.getElementById('search-input')) {
+    e.preventDefault();
+    document.getElementById('search-input').focus();
+  }
+});
+
+init();
+</script>
 {% endblock %}

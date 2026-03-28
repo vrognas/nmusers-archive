@@ -13,6 +13,7 @@ Usage:
 import argparse
 import calendar
 import html
+import json
 import logging
 import re
 import shutil
@@ -35,7 +36,108 @@ SITE_DIR = Path(__file__).parent
 TEMPLATE_DIR = SITE_DIR / "templates"
 STATIC_DIR = SITE_DIR / "static"
 DATA_PATH = Path("data/messages_all.parquet")
+OVERRIDES_PATH = Path("data/author_overrides.json")
 MONTH_NAMES = {i: calendar.month_name[i] for i in range(1, 13)}
+
+# Name particles that should stay lowercase (except at start of name)
+_NAME_PARTICLES = {"van", "von", "de", "del", "der", "den", "di", "du", "la", "le", "ter", "het"}
+
+
+def _load_author_overrides() -> dict[str, str]:
+    """Load manual author name overrides from JSON."""
+    if OVERRIDES_PATH.exists():
+        return json.loads(OVERRIDES_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+_AUTHOR_OVERRIDES = _load_author_overrides()
+
+
+def _decode_mime(name: str) -> str:
+    """Decode MIME-encoded name headers like =?utf-8?B?...?= or =?iso-8859-1?Q?...?=."""
+    import base64
+    import quopri
+    match = re.match(r"=\?([^?]+)\?([BQ])\?([^?]+)\?=", name, re.IGNORECASE)
+    if not match:
+        return name
+    charset, encoding, payload = match.group(1), match.group(2).upper(), match.group(3)
+    try:
+        raw = base64.b64decode(payload) if encoding == "B" else quopri.decodestring(payload.encode())
+        return raw.decode(charset, errors="replace")
+    except Exception:
+        return name
+
+
+def normalize_author(name: str) -> str:
+    """Normalize author name: apply overrides, strip suffixes, flip Last/First, title-case."""
+    if not name or name == "Unknown":
+        return name
+    # Manual overrides first (exact match on raw name)
+    if name in _AUTHOR_OVERRIDES:
+        return _AUTHOR_OVERRIDES[name]
+    n = name
+    # Decode MIME-encoded names
+    if n.startswith("=?"):
+        n = _decode_mime(n)
+    # Strip "Re: [NMusers]..." or "Subject:" (leaked subject lines, not names)
+    if re.match(r"^(Re:\s*|Fwd?:\s*|\[NMusers\]|Subject:)", n, re.IGNORECASE):
+        return "Unknown"
+    # Strip "From: " prefix leaked from headers
+    n = re.sub(r'^From:\s*"?', "", n).strip()
+    # Strip _at_ email addresses (name_at_domain.com -> name part only)
+    n = re.sub(r"_at_\S+", "", n).strip()
+    # Strip titles and honorifics
+    n = re.sub(r"\b(Dr|PhD|Ph\.D|Pharm\.?D|M\.?D|M\.?Sc|M\.?S|B\.?Sc|B\.?Ch|M\.?b|Mieee|Prof)\.?\b[,.]?\s*", "", n, flags=re.IGNORECASE).strip()
+    # Strip trailing '" -' artifacts
+    n = re.sub(r'\s*"\s*-\s*$', "", n).strip()
+    # Strip phone/fax numbers
+    n = re.sub(r"\s*\(?\d{3}\)?\s*[-.]?\s*\d{3}\s*[-.]?\s*\d{4}.*$", "", n).strip()
+    n = re.sub(r"\s*\+\d[\d\s/]+$", "", n).strip()
+    n = re.sub(r"\s*FAX\b.*$", "", n, flags=re.IGNORECASE).strip()
+    # Strip {PDBS~Basel} style org tags
+    n = re.sub(r"\s*\{[^}]*\}\s*", " ", n).strip()
+    # Strip /org suffixes (HMR/US, /FR, /Formulation/VKH, /FAES)
+    n = re.sub(r"\s*/\w[\w/]*\s*$", "", n).strip()
+    # Strip escaped parens \(...\)
+    n = re.sub(r"\s*\\?\([^)]*\\?\)\s*", " ", n).strip()
+    # Strip stray backslashes and asterisks
+    n = re.sub(r"[\\*]", "", n).strip()
+    # Strip suffixes in (...) and [...]
+    for _ in range(2):
+        n = re.sub(r"\s*\([^)]*\)\s*$", "", n).strip()
+        n = re.sub(r"\s*\[[^\]]*\]\s*$", "", n).strip()
+    # Strip U+FFFD replacement characters
+    n = n.replace("\ufffd", "").strip()
+    # Strip trailing commas, hyphens, periods from cleanup artifacts
+    n = n.strip(",-. ")
+    # If nothing meaningful remains, return Unknown
+    if not n or len(n) < 2:
+        return "Unknown"
+    # Replace dots between long words with spaces (Silke.Retlich -> Silke Retlich)
+    # but keep dots after single letters (A. Tahami stays A. Tahami)
+    n = re.sub(r"(?<=[a-zA-Z]{2})\.(?=[a-zA-Z]{2})", " ", n)
+    # Handle "Last, First" -> "First Last"
+    if "," in n and "@" not in n:
+        parts = [p.strip() for p in n.split(",", 1)]
+        if len(parts) == 2 and parts[1] and len(parts[0].split()) <= 3 and len(parts[1].split()) <= 3:
+            n = f"{parts[1]} {parts[0]}"
+    # Title-case, preserving particles
+    words = n.split()
+    result = []
+    for i, w in enumerate(words):
+        if w.lower() in _NAME_PARTICLES and i > 0:
+            result.append(w.lower())
+        elif w.isupper() and len(w) > 2:
+            result.append(w.capitalize())
+        elif w.islower() and len(w) > 2 and w not in _NAME_PARTICLES:
+            result.append(w.capitalize())
+        else:
+            result.append(w)
+    n = " ".join(result)
+    # Check overrides again after normalization
+    if n in _AUTHOR_OVERRIDES:
+        return _AUTHOR_OVERRIDES[n]
+    return n
 
 
 def commafy(value: int) -> str:
@@ -95,10 +197,22 @@ def normalize_subject(subject: str) -> str:
 
 
 # Improved category patterns (applied at build time to override source data)
+# Order matters: workshop is checked before job so conference/course signals win
 _CATEGORY_PATTERNS = {
     "admin": re.compile(
         r"\bunsubscri|\bsubscri|remove me|sign.?off\b|"
-        r"\bvirus\b|\bspam\b|do not open|phishing",
+        r"\bvirus\b|\bspam\b|do not open|phishing|"
+        r"test message|please ignore",
+        re.IGNORECASE,
+    ),
+    "workshop": re.compile(
+        r"workshop|course\b|training|registration|PAGE\s?\d{4}|"
+        r"PAGANZ|webinar|symposium|conference|congress|summer school|"
+        r"\bmeeting\b.*\d{4}|\d{4}.*\bmeeting\b|"
+        r"\bat PAGE\b|ACoP\d*\b|\bWCoP\b|\bISOP\b.*(?:webinar|session)|"
+        r"\bASCPT\b|save the date|register for|tutorial|PDx-Pop|"
+        r"call for.*program|call for.*abstract|call for.*paper|"
+        r"\bAPN\b|\bPKUK\b|\bQSPC\b|\bUPSS\b",
         re.IGNORECASE,
     ),
     "job": re.compile(
@@ -109,18 +223,18 @@ _CATEGORY_PATTERNS = {
         r"post.?doc|vacancy|vacanc|openings?\b|"
         r"associate director|senior.*(?:scientist|manager)|"
         r"pharmacometrician|apply\b.*(?:role|position)|"
-        r"we are seeking|join our|join the",
-        re.IGNORECASE,
-    ),
-    "workshop": re.compile(
-        r"workshop|course\b|training|registration|PAGE\s?\d{4}|"
-        r"PAGANZ|webinar|symposium|conference|summer school|"
-        r"\bmeeting\b.*\d{4}|\d{4}.*\bmeeting\b",
+        r"we are seeking|join our|join the|"
+        r"head of|vice president|\bVP\b.*pharm|wanted|"
+        r"\bintern\b|\binternship|faculty|professor|tenure|"
+        r"modelers?\b.*(?:for|at|in)|laboratory|studentship|"
+        r"expert\b.*(?:in|at|for)|(?:pharmacomet|PK.?PD|MIDD).*(?:in\s+\w+,|germany|usa|uk|france)|"
+        r"call for applications|PhD program|lecturer\b",
         re.IGNORECASE,
     ),
     "announcement": re.compile(
         r"\brelease\b|now available|version \d|new member|"
-        r"Wings for NONMEM",
+        r"Wings for NONMEM|\bWFN\b|sad news|passing of|in memoriam|obituary|"
+        r"\bR package\b|\bpython package\b|an? \w+ package for",
         re.IGNORECASE,
     ),
 }
@@ -170,6 +284,13 @@ def load_data() -> pl.DataFrame:
         pl.col("subject")
         .str.replace(r"\[NMusers\]\s*", "")
         .alias("subject"),
+    )
+
+    # Normalize author names: overrides, strip suffixes, flip Last/First, title-case
+    df = df.with_columns(
+        pl.col("from_name")
+        .map_elements(normalize_author, return_dtype=pl.Utf8)
+        .alias("from_name"),
     )
 
     df = df.with_columns(
@@ -246,14 +367,35 @@ def build_site(output_dir: Path):
 
     # --- Home page ---
     log.info("Generating home page...")
+    years_df = df.filter(pl.col("year").is_not_null())
     years_data = (
-        df.group_by("year")
+        years_df.group_by("year")
         .len()
-        .sort("year", descending=True)
+        .sort("year")
         .rename({"len": "count"})
         .to_dicts()
     )
-    recent = [r for r in reversed(rows) if r["date"] is not None][:30]
+    # Category breakdown per year for stacked chart
+    year_cats = (
+        years_df.group_by("year", "category")
+        .len()
+        .sort("year")
+        .rename({"len": "count"})
+    )
+    year_cat_map = {}
+    for r in year_cats.iter_rows(named=True):
+        yr = r["year"]
+        if yr not in year_cat_map:
+            year_cat_map[yr] = {}
+        year_cat_map[yr][r["category"]] = r["count"]
+    for yd in years_data:
+        cats = year_cat_map.get(yd["year"], {})
+        yd["technical"] = cats.get("technical", 0)
+        yd["job"] = cats.get("job", 0)
+        yd["workshop"] = cats.get("workshop", 0)
+        yd["announcement"] = cats.get("announcement", 0)
+        yd["admin"] = cats.get("admin", 0)
+    recent = [r for r in reversed(rows) if r["date"] is not None]
 
     source_counts = df.group_by("source").len().to_dicts()
     source_map = {r["source"]: r["len"] for r in source_counts}
@@ -426,15 +568,23 @@ def build_site(output_dir: Path):
     authors_dir.mkdir()
 
     # Author index
-    author_list = sorted(
-        [
-            {"name": msgs[0]["from_name"], "slug": slug, "count": len(msgs)}
-            for slug, msgs in author_groups.items()
-        ],
-        key=lambda a: a["name"].lower(),
-    )
+    author_list = []
+    for slug, msgs in author_groups.items():
+        dates = [m["date"] for m in msgs if m["date"]]
+        first_year = min(d.year for d in dates) if dates else None
+        last_year = max(d.year for d in dates) if dates else None
+        author_list.append({
+            "name": msgs[0]["from_name"],
+            "slug": slug,
+            "count": len(msgs),
+            "first_year": first_year,
+            "last_year": last_year,
+        })
+    author_list.sort(key=lambda a: a["name"].lower())
+    max_count = max(a["count"] for a in author_list) if author_list else 1
     author_index_html = env.get_template("author_index.html").render(
         authors=author_list,
+        max_count=max_count,
     )
     (authors_dir / "index.html").write_text(author_index_html, encoding="utf-8")
 
