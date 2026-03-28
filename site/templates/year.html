@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ year }} &mdash; NMusers Archive{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="/">Home</a><span class="sep">/</span>
+  {{ year }}
+</nav>
+
+<h1>{{ year }}</h1>
+<p style="color: var(--fg-dim); margin-bottom: 1.5rem;">{{ total_messages }} messages across {{ months | length }} months</p>
+
+<div class="month-grid">
+  {% for m in months %}
+  <a href="/{{ year }}/{{ m.month_num }}/" class="month-card">
+    <span>{{ m.month_name }}</span>
+    <span class="count">{{ m.count }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

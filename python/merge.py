@@ -44,8 +44,8 @@ def load_source(name: str, path: Path) -> pl.DataFrame | None:
     df = pl.read_parquet(path)
     log.info(f"{name}: {len(df)} rows")
 
-    if "source" not in df.columns:
-        df = df.with_columns(pl.lit(name).alias("source"))
+    # Normalize source to the canonical name from SOURCE_FILES
+    df = df.with_columns(pl.lit(name).alias("source"))
 
     for col in SHARED_COLUMNS:
         if col not in df.columns:

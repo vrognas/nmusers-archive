@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}NMusers Archive &mdash; NONMEM Mailing List{% endblock %}
+
+{% block content %}
+<h1>NMusers Mailing List Archive</h1>
+<p style="color: var(--fg-dim); margin-bottom: 1.5rem;">
+  Searchable archive of {{ total_messages | commafy }} messages from the NONMEM users mailing list, spanning {{ year_min }}&ndash;{{ year_max }}.
+</p>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <span class="number">{{ total_messages | commafy }}</span>
+    <span class="label">Messages</span>
+  </div>
+  <div class="stat-card">
+    <span class="number">{{ total_authors | commafy }}</span>
+    <span class="label">Contributors</span>
+  </div>
+  <div class="stat-card">
+    <span class="number">{{ year_max - year_min + 1 }}</span>
+    <span class="label">Years</span>
+  </div>
+  <div class="stat-card">
+    <span class="number">{{ total_technical | commafy }}</span>
+    <span class="label">Technical Q&amp;A</span>
+  </div>
+</div>
+
+<h2>Browse by Year</h2>
+<div class="year-grid">
+  {% for year in years %}
+  <a href="/{{ year.year }}/" class="year-link">{{ year.year }} <span style="font-weight:400; color: var(--fg-muted); font-size: 0.8rem;">({{ year.count }})</span></a>
+  {% endfor %}
+</div>
+
+<h2>Recent Messages</h2>
+<table class="msg-table">
+  <thead>
+    <tr>
+      <th class="date-col">Date</th>
+      <th class="author-col">Author</th>
+      <th class="subject-col">Subject</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for msg in recent_messages %}
+    <tr>
+      <td class="date-col">{{ msg.date_short }}</td>
+      <td class="author-col"><a href="/authors/{{ msg.author_slug }}/">{{ msg.from_name }}</a></td>
+      <td class="subject-col">
+        <a href="{{ msg.url }}">{{ msg.subject }}</a>
+        <span class="badge badge-{{ msg.category }}">{{ msg.category }}</span>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

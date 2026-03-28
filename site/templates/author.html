@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ author_name }} &mdash; NMusers Archive{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="/">Home</a><span class="sep">/</span>
+  <a href="/authors/">Authors</a><span class="sep">/</span>
+  {{ author_name }}
+</nav>
+
+<h1>{{ author_name }}</h1>
+<p style="color: var(--fg-dim); margin-bottom: 1rem;">{{ messages | length }} messages, {{ year_min }}&ndash;{{ year_max }}</p>
+
+<table class="msg-table">
+  <thead>
+    <tr>
+      <th class="date-col">Date</th>
+      <th class="subject-col">Subject</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for msg in messages %}
+    <tr>
+      <td class="date-col">{{ msg.date_short }}</td>
+      <td class="subject-col">
+        <a href="{{ msg.url }}">{{ msg.subject }}</a>
+        <span class="badge badge-{{ msg.category }}">{{ msg.category }}</span>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

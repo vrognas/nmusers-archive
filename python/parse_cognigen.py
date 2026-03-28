@@ -136,6 +136,10 @@ def parse_date_flexible(date_string: str) -> datetime | None:
     # Remove duplicate year: "2002 2002" → "2002"
     cleaned = re.sub(r"(\d{4})\s+\1", r"\1", cleaned)
     formats = [
+        # ISO 8601 (from hypermail <meta name="created">)
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
         # RFC 2822 variants
         "%d %b %Y %H:%M:%S %z",
         "%d %b %Y %H:%M:%S",
@@ -375,8 +379,39 @@ def _extract_message_from_block(
 
 # --- Pipermail format parser (cognigen.com/nmusers) ---
 
+def _extract_hypermail_body(soup: BeautifulSoup) -> str:
+    """Extract message body from hypermail-generated pages.
+
+    Looks for the <div class="mail"> between body="start" and body="end"
+    comments, falling back to <pre> tags or full page text.
+    """
+    # Try the hypermail mail div first
+    mail_div = soup.find("div", class_="mail")
+    if mail_div:
+        # Remove the header <address> block and navigation elements
+        for tag in mail_div.find_all(["address", "map", "dfn"]):
+            tag.decompose()
+        # Remove the "Received on ..." span
+        received = mail_div.find("span", id="received")
+        if received:
+            received.decompose()
+        return mail_div.get_text(separator="\n").strip()
+
+    # Fallback: <pre> tags
+    pre_parts = [pre.get_text() for pre in soup.find_all("pre")]
+    if pre_parts:
+        return "\n".join(pre_parts)
+
+    # Last resort: full page text
+    return soup.get_text(separator="\n")
+
+
 def parse_pipermail_page(filepath: Path) -> dict | None:
-    """Parse a cognigen pipermail page (one message per page)."""
+    """Parse a cognigen hypermail page (one message per page).
+
+    Uses structured metadata (meta tags, HTML comments, span elements)
+    rather than regex on body text.
+    """
     try:
         html = filepath.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -384,22 +419,53 @@ def parse_pipermail_page(filepath: Path) -> dict | None:
 
     soup = BeautifulSoup(html, "html.parser")
 
+    # --- Subject: <title> tag (already clean) ---
     title_el = soup.find("title")
     subject = title_el.get_text(strip=True) if title_el else ""
 
-    body_parts = [pre.get_text() for pre in soup.find_all("pre")]
-    body_raw = "\n".join(body_parts)
+    # --- Author: <meta name="author"> or <!-- name="..." --> or <span id="from"> ---
+    from_name = ""
+    meta_author = soup.find("meta", attrs={"name": "author"})
+    if meta_author and meta_author.get("content", "").strip():
+        from_name = meta_author["content"].strip()
+    if not from_name:
+        # Try HTML comment: <!-- name="Nick Holford" -->
+        name_comment = re.search(r'<!--\s*name="([^"]+)"', html)
+        if name_comment:
+            from_name = name_comment.group(1).strip()
+    if not from_name:
+        # Try <span id="from"> text
+        from_span = soup.find("span", id="from")
+        if from_span:
+            from_text = from_span.get_text()
+            from_text = re.sub(r"^From:\s*", "", from_text).strip()
+            from_name = _extract_from_name(from_text)
 
-    if not body_raw.strip():
-        body_raw = soup.get_text(separator="\n")
+    # --- Date: <meta name="created"> or <!-- sent="..." --> or <span id="date"> ---
+    date = None
+    date_raw = ""
+    meta_created = soup.find("meta", attrs={"name": "created"})
+    if meta_created and meta_created.get("content", "").strip():
+        date_raw = meta_created["content"].strip()
+        date = parse_date_flexible(date_raw)
+    if date is None:
+        # Try HTML comment: <!-- sent="Fri, 01 Dec 2006 22:59:17 +1300" -->
+        sent_comment = re.search(r'<!--\s*sent="([^"]+)"', html)
+        if sent_comment:
+            date_raw = sent_comment.group(1).strip()
+            date = parse_date_flexible(date_raw)
+    if date is None:
+        # Try <span id="date"> text
+        date_span = soup.find("span", id="date")
+        if date_span:
+            date_text = date_span.get_text()
+            date_text = re.sub(r"^Date:\s*", "", date_text).strip()
+            date_raw = date_text
+            date = parse_date_flexible(date_raw)
 
-    from_match = re.search(r"From:\s*(.+?)(?:\n|$)", body_raw)
-    date_match = re.search(r"Date:\s*(.+?)(?:\n|$)", body_raw)
-
-    from_name = _extract_from_name(from_match.group(1).strip() if from_match else "")
-
-    date_raw = date_match.group(1).strip() if date_match else ""
-    date = parse_date_flexible(date_raw) if date_raw else None
+    # --- Body ---
+    body_raw = _extract_hypermail_body(soup)
+    body_clean = strip_disclaimers(body_raw)
 
     # 2006-December_0015.html → month + id
     file_match = re.match(r"(\d{4}-\w+)_(\d+)\.html", filepath.name)
@@ -417,7 +483,7 @@ def parse_pipermail_page(filepath: Path) -> dict | None:
         "subject": subject,
         "category": classify_subject(subject),
         "body_raw": body_raw,
-        "body_clean": strip_disclaimers(body_raw),
+        "body_clean": body_clean,
     }
 
 

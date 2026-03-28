@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ subject }} &mdash; NMusers Archive{% endblock %}
+{% block description %}{{ subject }} — message from {{ from_name }} on the NMusers mailing list, {{ date_long }}.{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="/">Home</a><span class="sep">/</span>
+  <a href="/{{ year }}/">{{ year }}</a><span class="sep">/</span>
+  <a href="/{{ year }}/{{ month_num }}/">{{ month_name }}</a>
+</nav>
+
+<article>
+  <div class="msg-header">
+    <h1>{{ subject }}</h1>
+    <div class="msg-meta">
+      <span>From: <a href="/authors/{{ author_slug }}/">{{ from_name }}</a></span>
+      <span>Date: {{ date_long }}</span>
+      <span class="badge badge-{{ category }}">{{ category }}</span>
+    </div>
+  </div>
+
+  <div class="msg-body">{{ body }}</div>
+</article>
+
+{% if thread_messages %}
+<div class="thread-list">
+  <h3>Related messages (same thread)</h3>
+  <table class="msg-table">
+    <tbody>
+      {% for t in thread_messages %}
+      <tr{% if t.is_current %} style="background: var(--bg-hover);"{% endif %}>
+        <td class="date-col">{{ t.date_short }}</td>
+        <td class="author-col">{{ t.from_name }}</td>
+        <td class="subject-col">
+          {% if t.is_current %}{{ t.subject }}{% else %}<a href="{{ t.url }}">{{ t.subject }}</a>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="msg-nav">
+  <div>{% if prev_url %}<a href="{{ prev_url }}">&larr; Previous</a>{% endif %}</div>
+  <div>{% if next_url %}<a href="{{ next_url }}">Next &rarr;</a>{% endif %}</div>
+</div>
+{% endblock %}

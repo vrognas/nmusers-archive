@@ -58,6 +58,7 @@ async def download_message(
     message_number: int,
     output_dir: Path,
     semaphore: asyncio.Semaphore,
+    max_retries: int = 5,
 ) -> dict:
     """Download a single message page, respecting concurrency limits."""
     filename = f"msg{message_number:05d}.html"
@@ -68,25 +69,36 @@ async def download_message(
 
     async with semaphore:
         url = f"{BASE_URL}/{filename}"
-        try:
-            response = await client.get(url)
-        except httpx.HTTPError as exc:
-            log.warning(f"msg{message_number:05d} FAILED: {exc}")
-            return {"id": message_number, "status": "error"}
+        for attempt in range(max_retries):
+            try:
+                response = await client.get(url)
+            except httpx.HTTPError as exc:
+                log.warning(f"msg{message_number:05d} FAILED: {exc}")
+                return {"id": message_number, "status": "error"}
 
-        if response.status_code == 404:
-            return {"id": message_number, "status": "not_found"}
+            if response.status_code == 404:
+                return {"id": message_number, "status": "not_found"}
 
-        if response.status_code != 200:
-            log.warning(f"msg{message_number:05d} HTTP {response.status_code}")
-            return {"id": message_number, "status": "error"}
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 0))
+                backoff = max(retry_after, 2 ** (attempt + 1))
+                if attempt < max_retries - 1:
+                    log.debug(f"msg{message_number:05d} 429, retry in {backoff}s")
+                    await asyncio.sleep(backoff)
+                    continue
+                else:
+                    log.warning(f"msg{message_number:05d} 429 after {max_retries} retries")
+                    return {"id": message_number, "status": "error"}
 
-        filepath.write_text(response.text, encoding="utf-8")
+            if response.status_code != 200:
+                log.warning(f"msg{message_number:05d} HTTP {response.status_code}")
+                return {"id": message_number, "status": "error"}
 
-        # Polite delay after each actual download
-        await asyncio.sleep(0.5)
+            filepath.write_text(response.text, encoding="utf-8")
+            await asyncio.sleep(0.5)
+            return {"id": message_number, "status": "downloaded"}
 
-        return {"id": message_number, "status": "downloaded"}
+    return {"id": message_number, "status": "error"}
 
 
 async def scrape(
@@ -102,20 +114,39 @@ async def scrape(
 
     log.info(f"Scraping msg{start_id:05d}–msg{end_id:05d} ({total} messages, {max_workers} workers)")
 
+    results: list[dict] = []
+    downloaded = 0
+    cached = 0
+    failed = 0
+
     async with httpx.AsyncClient(
         headers={"User-Agent": USER_AGENT},
         timeout=30,
         follow_redirects=True,
     ) as client:
-        tasks = [
-            download_message(client, msg_id, output_dir, semaphore)
-            for msg_id in range(start_id, end_id + 1)
-        ]
-        results = await asyncio.gather(*tasks)
+        all_ids = list(range(start_id, end_id + 1))
+        batch_size = 100
+        for i in range(0, len(all_ids), batch_size):
+            batch_ids = all_ids[i : i + batch_size]
+            tasks = [
+                download_message(client, msg_id, output_dir, semaphore)
+                for msg_id in batch_ids
+            ]
+            batch_results = await asyncio.gather(*tasks)
+            results.extend(batch_results)
 
-    downloaded = sum(1 for r in results if r["status"] == "downloaded")
-    cached = sum(1 for r in results if r["status"] == "cached")
-    failed = sum(1 for r in results if r["status"] in ("error", "not_found"))
+            batch_dl = sum(1 for r in batch_results if r["status"] == "downloaded")
+            batch_cached = sum(1 for r in batch_results if r["status"] == "cached")
+            batch_failed = sum(1 for r in batch_results if r["status"] in ("error", "not_found"))
+            downloaded += batch_dl
+            cached += batch_cached
+            failed += batch_failed
+
+            done = i + len(batch_ids)
+            log.info(
+                f"Progress: {done}/{total} "
+                f"({downloaded} new, {cached} cached, {failed} failed)"
+            )
 
     log.info(f"Done: {downloaded} downloaded, {cached} cached, {failed} failed")
     return results

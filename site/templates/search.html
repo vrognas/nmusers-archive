@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Search &mdash; NMusers Archive{% endblock %}
+
+{% block content %}
+<h1>Search the Archive</h1>
+<p style="color: var(--fg-dim); margin-bottom: 1.5rem;">
+  Full-text search across {{ total_messages | commafy }} messages with typo tolerance. Use filters to narrow by category or year.
+</p>
+
+<div id="search-app">
+  <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap;">
+    <input type="text" id="search-input" placeholder="Search messages..."
+      style="flex: 1; min-width: 200px; padding: 0.6rem 1rem; background: var(--bg-card); color: var(--fg);
+             border: 1px solid var(--border); border-radius: 6px; font-size: 1rem; font-family: inherit;"
+      autofocus>
+    <select id="filter-category"
+      style="padding: 0.6rem 0.75rem; background: var(--bg-card); color: var(--fg);
+             border: 1px solid var(--border); border-radius: 6px; font-family: inherit;">
+      <option value="">All categories</option>
+      <option value="technical">Technical</option>
+      <option value="job">Job</option>
+      <option value="workshop">Workshop</option>
+      <option value="announcement">Announcement</option>
+      <option value="admin">Admin</option>
+    </select>
+  </div>
+
+  <div id="search-status" style="color: var(--fg-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+    Loading search index...
+  </div>
+
+  <div id="search-results"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { restore } from 'https://cdn.jsdelivr.net/npm/@orama/plugin-data-persistence@latest/+esm';
+import { search } from 'https://cdn.jsdelivr.net/npm/@orama/orama@latest/+esm';
+
+let db = null;
+let snippets = {};
+
+async function init() {
+  const status = document.getElementById('search-status');
+  try {
+    const [indexResp, snippetsResp] = await Promise.all([
+      fetch('/search-index.json'),
+      fetch('/search-snippets.json'),
+    ]);
+    const data = await indexResp.json();
+    snippets = await snippetsResp.json();
+    db = await restore('json', data);
+    status.textContent = 'Ready. Type to search.';
+
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('q');
+    if (q) {
+      document.getElementById('search-input').value = q;
+      doSearch();
+    }
+  } catch (e) {
+    status.textContent = 'Failed to load search index.';
+    console.error(e);
+  }
+}
+
+function truncate(text, maxLen) {
+  if (!text || text.length <= maxLen) return text || '';
+  return text.substring(0, maxLen) + '...';
+}
+
+function createResultCard(doc) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.cssText = 'padding: 0.75rem 1rem;';
+
+  const titleRow = document.createElement('div');
+  titleRow.style.marginBottom = '0.25rem';
+  const link = document.createElement('a');
+  link.href = doc.url;
+  link.style.fontWeight = '600';
+  link.textContent = doc.subject;
+  const badge = document.createElement('span');
+  badge.className = 'badge badge-' + doc.category;
+  badge.textContent = doc.category;
+  badge.style.marginLeft = '0.5rem';
+  titleRow.appendChild(link);
+  titleRow.appendChild(badge);
+
+  const meta = document.createElement('div');
+  meta.style.cssText = 'font-size: 0.85rem; color: var(--fg-dim); margin-bottom: 0.3rem;';
+  meta.textContent = doc.from_name + ' \u00B7 ' + doc.date;
+
+  const bodyText = snippets[doc.url] || '';
+  if (bodyText) {
+    const snippet = document.createElement('div');
+    snippet.style.cssText = 'font-size: 0.85rem; color: var(--fg-muted);';
+    snippet.textContent = truncate(bodyText, 200);
+    card.appendChild(titleRow);
+    card.appendChild(meta);
+    card.appendChild(snippet);
+  } else {
+    card.appendChild(titleRow);
+    card.appendChild(meta);
+  }
+  return card;
+}
+
+async function doSearch() {
+  if (!db) return;
+  const term = document.getElementById('search-input').value.trim();
+  const category = document.getElementById('filter-category').value;
+  const status = document.getElementById('search-status');
+  const resultsEl = document.getElementById('search-results');
+
+  if (!term) {
+    status.textContent = 'Ready. Type to search.';
+    resultsEl.replaceChildren();
+    return;
+  }
+
+  const where = {};
+  if (category) where.category = category;
+
+  const start = performance.now();
+  const results = await search(db, {
+    term,
+    tolerance: Math.min(Math.floor(term.length / 4), 2),
+    boost: { subject: 5, from_name: 3 },
+    limit: 50,
+    ...(Object.keys(where).length > 0 ? { where } : {}),
+  });
+  const elapsed = (performance.now() - start).toFixed(1);
+
+  status.textContent = results.count + ' results in ' + elapsed + 'ms';
+
+  resultsEl.replaceChildren();
+
+  if (results.hits.length === 0) {
+    const noResults = document.createElement('p');
+    noResults.style.color = 'var(--fg-muted)';
+    noResults.textContent = 'No messages found. Try a different search term or relax the filters.';
+    resultsEl.appendChild(noResults);
+    return;
+  }
+
+  for (const hit of results.hits) {
+    resultsEl.appendChild(createResultCard(hit.document));
+  }
+}
+
+document.getElementById('search-input').addEventListener('input', doSearch);
+document.getElementById('filter-category').addEventListener('change', doSearch);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement !== document.getElementById('search-input')) {
+    e.preventDefault();
+    document.getElementById('search-input').focus();
+  }
+});
+
+init();
+</script>
+{% endblock %}

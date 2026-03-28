@@ -1,0 +1,25 @@
+{
+  "name": "nmusers-archive",
+  "version": "1.0.0",
+  "description": "A structured, searchable archive of the [NMusers mailing list](https://www.mail-archive.com/nmusers@globomaxnm.com/) — the primary discussion forum for [NONMEM](https://www.iconplc.com/innovation/nonmem/) users in pharmacometrics.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vrognas/nmusers-archive.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/vrognas/nmusers-archive/issues"
+  },
+  "homepage": "https://github.com/vrognas/nmusers-archive#readme",
+  "dependencies": {
+    "@orama/orama": "^3.1.18",
+    "@orama/plugin-data-persistence": "^3.1.18"
+  }
+}

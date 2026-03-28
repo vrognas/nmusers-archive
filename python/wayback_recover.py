@@ -101,8 +101,9 @@ async def download_snapshot(
     output_dir: Path,
     source: str,
     semaphore: asyncio.Semaphore,
+    max_retries: int = 5,
 ) -> dict:
-    """Download a single Wayback Machine snapshot."""
+    """Download a single Wayback Machine snapshot with retry on 429."""
     filename = url_to_filename(entry["url"], source)
     filepath = output_dir / filename
 
@@ -113,23 +114,36 @@ async def download_snapshot(
     wayback_url = f"https://web.archive.org/web/{entry['timestamp']}id_/{entry['url']}"
 
     async with semaphore:
-        try:
-            response = await client.get(wayback_url)
-        except httpx.HTTPError as exc:
-            log.warning(f"{filename} FAILED: {exc}")
-            return {"url": entry["url"], "status": "error"}
+        for attempt in range(max_retries):
+            try:
+                response = await client.get(wayback_url)
+            except httpx.HTTPError as exc:
+                log.warning(f"{filename} FAILED: {exc}")
+                return {"url": entry["url"], "status": "error"}
 
-        if response.status_code != 200:
-            log.warning(f"{filename} HTTP {response.status_code}")
-            return {"url": entry["url"], "status": "error"}
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 0))
+                backoff = max(retry_after, 2 ** (attempt + 1))
+                if attempt < max_retries - 1:
+                    log.debug(f"{filename} 429, retry in {backoff}s (attempt {attempt + 1})")
+                    await asyncio.sleep(backoff)
+                    continue
+                else:
+                    log.warning(f"{filename} 429 after {max_retries} retries")
+                    return {"url": entry["url"], "status": "error"}
 
-        filepath.write_text(response.text, encoding="utf-8")
-        await asyncio.sleep(1)  # Be polite to the Wayback Machine
+            if response.status_code != 200:
+                log.warning(f"{filename} HTTP {response.status_code}")
+                return {"url": entry["url"], "status": "error"}
 
-        return {"url": entry["url"], "status": "downloaded"}
+            filepath.write_text(response.text, encoding="utf-8")
+            await asyncio.sleep(1.5)  # Be polite to the Wayback Machine
+            return {"url": entry["url"], "status": "downloaded"}
+
+    return {"url": entry["url"], "status": "error"}
 
 
-async def download_all(source: str, max_workers: int = 3) -> list[dict]:
+async def download_all(source: str, max_workers: int = 2) -> list[dict]:
     """Download all archived pages for a source from saved manifest."""
     config = CDX_QUERIES[source]
     output_dir = Path(config["output_dir"])
@@ -152,20 +166,39 @@ async def download_all(source: str, max_workers: int = 3) -> list[dict]:
 
     log.info(f"Downloading {total} pages to {output_dir} ({max_workers} workers)")
 
+    results: list[dict] = []
+    downloaded = 0
+    cached = 0
+    failed = 0
+
     async with httpx.AsyncClient(
         headers={"User-Agent": USER_AGENT},
         timeout=30,
         follow_redirects=True,
     ) as client:
-        tasks = [
-            download_snapshot(client, entry, output_dir, source, semaphore)
-            for entry in entries
-        ]
-        results = await asyncio.gather(*tasks)
+        # Process in batches to avoid overwhelming the server
+        batch_size = 50
+        for i in range(0, total, batch_size):
+            batch = entries[i : i + batch_size]
+            tasks = [
+                download_snapshot(client, entry, output_dir, source, semaphore)
+                for entry in batch
+            ]
+            batch_results = await asyncio.gather(*tasks)
+            results.extend(batch_results)
 
-    downloaded = sum(1 for r in results if r["status"] == "downloaded")
-    cached = sum(1 for r in results if r["status"] == "cached")
-    failed = sum(1 for r in results if r["status"] == "error")
+            batch_dl = sum(1 for r in batch_results if r["status"] == "downloaded")
+            batch_cached = sum(1 for r in batch_results if r["status"] == "cached")
+            batch_failed = sum(1 for r in batch_results if r["status"] == "error")
+            downloaded += batch_dl
+            cached += batch_cached
+            failed += batch_failed
+
+            done = i + len(batch)
+            log.info(
+                f"Progress: {done}/{total} "
+                f"({downloaded} new, {cached} cached, {failed} failed)"
+            )
 
     log.info(f"Done: {downloaded} downloaded, {cached} cached, {failed} failed")
     return results
@@ -215,7 +248,7 @@ def main():
         "--source", choices=["old", "pipermail", "all"], default="all",
     )
     download_parser.add_argument(
-        "--workers", type=int, default=3, help="Max concurrent requests",
+        "--workers", type=int, default=2, help="Max concurrent requests",
     )
 
     args = parser.parse_args()

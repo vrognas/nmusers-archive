@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}About &mdash; NMusers Archive{% endblock %}
+
+{% block content %}
+<h1>About This Archive</h1>
+
+<div class="card">
+  <h2>What is NMusers?</h2>
+  <p>NMusers is the primary mailing list for users of <a href="https://www.iconplc.com/solutions/technologies/nonmem/">NONMEM</a>, the gold-standard software for nonlinear mixed-effects modeling in pharmacometrics. The list has been active since 1995 and covers topics ranging from model coding and estimation methods to pharmacokinetic/pharmacodynamic theory.</p>
+</div>
+
+<div class="card">
+  <h2>Data Sources</h2>
+  <p>This archive combines three sources to provide comprehensive coverage:</p>
+  <ul style="margin: 0.5rem 0 0 1.5rem;">
+    <li><strong>mail-archive.com</strong> (2007&ndash;present) &mdash; {{ count_mail_archive | commafy }} messages</li>
+    <li><strong>cognigencorp.com</strong> via Wayback Machine (1995&ndash;2006) &mdash; {{ count_cognigencorp | commafy }} messages</li>
+    <li><strong>cognigen.com pipermail</strong> via Wayback Machine (2006&ndash;2021) &mdash; {{ count_pipermail | commafy }} messages</li>
+  </ul>
+  <p style="margin-top: 0.5rem;">After deduplication: <strong>{{ total_messages | commafy }}</strong> unique messages.</p>
+</div>
+
+<div class="card">
+  <h2>Privacy</h2>
+  <p>All messages in this archive were originally posted to a public mailing list. Email addresses have been stripped from the archive. Author names are shown as they appeared in the original messages.</p>
+</div>
+
+<div class="card">
+  <h2>Source Code</h2>
+  <p>The scraping, parsing, and site generation code is open source: <a href="https://github.com/vrognas/nmusers-archive">github.com/vrognas/nmusers-archive</a></p>
+</div>
+{% endblock %}

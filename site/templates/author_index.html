@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Contributors &mdash; NMusers Archive{% endblock %}
+
+{% block content %}
+<h1>Contributors</h1>
+<p style="color: var(--fg-dim); margin-bottom: 1.5rem;">{{ authors | length }} people have contributed to the NMusers mailing list.</p>
+
+<ul class="author-list">
+  {% for a in authors %}
+  <li>
+    <a href="/authors/{{ a.slug }}/">{{ a.name }}</a>
+    <span class="author-count">({{ a.count }})</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endblock %}

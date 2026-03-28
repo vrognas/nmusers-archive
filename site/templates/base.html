@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}NMusers Archive{% endblock %}</title>
+  <meta name="description" content="{% block description %}Searchable archive of the NMusers (NONMEM) mailing list, 1995–present.{% endblock %}">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="/static/js/theme.js"></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container">
+      <a href="/" class="navbar-brand">NMusers Archive</a>
+      <ul class="navbar-nav">
+        <li><a href="/search/">Search</a></li>
+        <li><a href="/authors/">Authors</a></li>
+        <li><a href="/about/">About</a></li>
+        <li><button id="theme-toggle">Light</button></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main>
+    <div class="container">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      NMusers mailing list archive, 1995&ndash;present.
+      Data from <a href="https://www.mail-archive.com/nmusers@globomaxnm.com/">mail-archive.com</a>
+      and the <a href="https://web.archive.org/">Wayback Machine</a>.
+      Built by <a href="https://vrognas.com">Viktor Rogn&aring;s</a>.
+    </div>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
