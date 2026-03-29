@@ -568,7 +568,9 @@
   }
 
   // --- Filter/view handlers ---
-  var visibleLimit = 30;
+  var defaultVisibleLimit = 30;
+  var filteredVisibleLimit = 500;
+  var visibleLimit = defaultVisibleLimit;
   var currentState = getFilterState();
   var currentFilteredMessages = filterMessages(currentState);
 
@@ -691,7 +693,7 @@
     btn.addEventListener("click", function () {
       btn.classList.toggle("active");
       btn.setAttribute("aria-pressed", btn.classList.contains("active"));
-      visibleLimit = 30;
+      visibleLimit = getFilterState().filtering ? filteredVisibleLimit : defaultVisibleLimit;
       render();
     });
   });
@@ -704,7 +706,7 @@
       b.setAttribute("aria-pressed", turnOn);
     });
     syncAllBtn();
-    visibleLimit = 30;
+    visibleLimit = getFilterState().filtering ? filteredVisibleLimit : defaultVisibleLimit;
     render();
   });
 
@@ -724,7 +726,7 @@
         btn.setAttribute("aria-pressed", btn.classList.contains("active"));
       }
       syncAllBtn();
-      visibleLimit = 30;
+      visibleLimit = getFilterState().filtering ? filteredVisibleLimit : defaultVisibleLimit;
       render();
     });
   });
@@ -744,7 +746,7 @@
   // Load more button
   if (loadMoreBtn) {
     loadMoreBtn.addEventListener('click', function () {
-      visibleLimit += 30;
+      visibleLimit += currentState.filtering ? filteredVisibleLimit : defaultVisibleLimit;
       scheduleViewSync(currentState, currentFilteredMessages);
     });
   }
