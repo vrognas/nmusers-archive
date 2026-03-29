@@ -31,9 +31,10 @@ SOURCE_FILES = {
     "mail_archive": DATA_DIR / "messages.parquet",
     "cognigencorp": DATA_DIR / "cognigencorp_messages.parquet",
     "pipermail": DATA_DIR / "cognigen_pipermail_messages.parquet",
+    "phor": DATA_DIR / "phor_messages.parquet",
 }
 
-SHARED_COLUMNS = ["date", "from_name", "subject", "category", "body_clean", "source"]
+SHARED_COLUMNS = ["date", "from_name", "subject", "category", "body_clean", "source", "source_url"]
 
 
 def clean_from_name(s: str) -> str:
@@ -55,6 +56,33 @@ def load_source(name: str, path: Path) -> pl.DataFrame | None:
 
     # Normalize source to the canonical name from SOURCE_FILES
     df = df.with_columns(pl.lit(name).alias("source"))
+
+    # Generate source_url pointing to the original message
+    if name == "mail_archive" and "message_number" in df.columns:
+        df = df.with_columns(
+            (pl.lit("https://www.mail-archive.com/nmusers@globomaxnm.com/msg")
+             + pl.col("message_number").cast(pl.Utf8).str.zfill(5)
+             + pl.lit(".html")
+            ).alias("source_url")
+        )
+    elif name == "cognigencorp" and "source_file" in df.columns:
+        df = df.with_columns(
+            (pl.lit("https://web.archive.org/web/*/https://www.cognigencorp.com/nonmem/nm/")
+             + pl.col("source_file")
+            ).alias("source_url")
+        )
+    elif name == "pipermail" and "source_file" in df.columns:
+        df = df.with_columns(
+            (pl.lit("https://web.archive.org/web/*/https://www.cognigen.com/nmusers/")
+             + pl.col("source_file").str.replace("_", "/")
+            ).alias("source_url")
+        )
+    elif name == "phor" and "source_file" in df.columns:
+        df = df.with_columns(
+            (pl.lit("https://web.archive.org/web/*/http://www.phor.com/nonmem/nm/")
+             + pl.col("source_file")
+            ).alias("source_url")
+        )
 
     for col in SHARED_COLUMNS:
         if col not in df.columns:

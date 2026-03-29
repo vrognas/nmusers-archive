@@ -76,6 +76,9 @@ def normalize_author(name: str) -> str:
     if name in _AUTHOR_OVERRIDES:
         return _AUTHOR_OVERRIDES[name]
     n = name
+    # Strip wrapping parentheses: "(Jeff Koup)" → "Jeff Koup"
+    if n.startswith("(") and n.endswith(")"):
+        n = n[1:-1].strip()
     # Decode MIME-encoded names
     if n.startswith("=?"):
         n = _decode_mime(n)
@@ -146,6 +149,8 @@ def commafy(value: int) -> str:
 
 def clean_body(text: str) -> Markup:
     """Clean HTML remnants and auto-link URLs in message bodies."""
+    # Replace U+FFFD replacement characters with best-guess substitution
+    text = text.replace("\ufffd", "")
     # Convert <br>, <br/>, <br /> to newlines
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     # Convert <p> / </p> to double newlines
@@ -160,6 +165,8 @@ def clean_body(text: str) -> Markup:
     )
     # Clean bare angle-bracket URLs: <http://url> → http://url
     text = re.sub(r"<(https?://[^>]+)>", r"\1", text)
+    # Split concatenated URLs (e.g. "...docs.htmlhttps://..." → "...docs.html https://...")
+    text = re.sub(r"(?<=\S)(https?://)", r" \1", text)
     # Collapse excessive blank lines (3+ → 2)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = text.strip()
@@ -168,14 +175,15 @@ def clean_body(text: str) -> Markup:
     text = html.escape(text)
 
     # Auto-link URLs (after escaping, so the <a> tags we insert are preserved)
+    # Note: &amp; is allowed (query params), but &lt; &gt; &quot; are not
     text = re.sub(
-        r"(https?://[^\s&lt;)&\]]+)",
+        r'(https?://(?:[^\s<>)\]"\'&]|&amp;)+)',
         r'<a href="\1">\1</a>',
         text,
     )
     # Auto-link www. URLs without protocol
     text = re.sub(
-        r"(?<!/)(www\.[^\s&lt;)&\]]+)",
+        r'(?<!/)(www\.(?:[^\s<>)\]"\'&]|&amp;)+)',
         r'<a href="http://\1">\1</a>',
         text,
     )
@@ -193,24 +201,30 @@ def normalize_subject(subject: str) -> str:
         if new == cleaned:
             break
         cleaned = new
-    return cleaned.lower().strip()
+    s = cleaned.lower().strip()
+    # Normalize common spelling variants for better thread grouping
+    s = s.replace("modelling", "modeling").replace("behaviour", "behavior")
+    s = s.replace("minimisation", "minimization").replace("optimisation", "optimization")
+    s = s.replace("parametrisation", "parametrization").replace("characterisation", "characterization")
+    return s
 
 
 # Improved category patterns (applied at build time to override source data)
-# Order matters: workshop is checked before job so conference/course signals win
+# Order matters: event is checked before job so conference/course signals win
 _CATEGORY_PATTERNS = {
     "admin": re.compile(
         r"\bunsubscri|\bsubscri|remove me|sign.?off\b|"
         r"\bvirus\b|\bspam\b|do not open|phishing|"
-        r"test message|please ignore|linkedin",
+        r"^test\b|test message|please ignore|do not respond|linkedin|"
+        r"^To:|email\s*protected|^\s*$",
         re.IGNORECASE,
     ),
-    "workshop": re.compile(
-        r"workshop|course\b|training|registration|PAGE\s?\d{4}|"
+    "event": re.compile(
+        r"workshop|courses?\b|training|registration|diploma|PAGE\s?\d{4}|"
         r"PAGANZ|webinar|symposium|conference|congress|summer school|"
         r"\bmeeting\b.*\d{4}|\d{4}.*\bmeeting\b|"
         r"\bat PAGE\b|ACoP\d*\b|\bWCoP\b|\bISOP\b.*(?:webinar|session)|"
-        r"\bASCPT\b|save the date|register for|tutorial|PDx-Pop|"
+        r"\bASCPT\b|save the date|mark your calendar|register for|tutorial|PDx-Pop\s+workshop|"
         r"call for.*program|call for.*abstract|call for.*paper|"
         r"\bAPN\b|\bPKUK\b|\bQSPC\b|\bUPSS\b",
         re.IGNORECASE,
@@ -219,7 +233,7 @@ _CATEGORY_PATTERNS = {
         r"hiring|position[s]?\b|opportunit|career|recruit|"
         r"job\b|talent|now hiring|"
         r"director\b.*(?:role|search|quantitative|pharmacol|pharmacomet)|"
-        r"scientist\b|researcher\b|looking for|fellowship|postdoc|"
+        r"scientists?\b|researchers?\b|looking for\b.*(?:scientist|modeler|pharmacomet|analyst|candidate|talent|person)|fellowship|postdoc|"
         r"post.?doc|vacancy|vacanc|openings?\b|"
         r"associate director|senior.*(?:scientist|manager)|"
         r"pharmacometrician|apply\b.*(?:role|position)|"
@@ -228,13 +242,19 @@ _CATEGORY_PATTERNS = {
         r"\bintern\b|\binternship|faculty|professor|tenure|"
         r"modelers?\b.*(?:for|at|in)|laboratory|studentship|"
         r"expert\b.*(?:in|at|for)|(?:pharmacomet|PK.?PD|MIDD).*(?:in\s+\w+,|germany|usa|uk|france)|"
-        r"call for applications|PhD program|lecturer\b",
+        r"call for applications|PhD program|lecturer\b|collaborator\w*\s+sought|sought\b|"
+        r"call for.*members?\b|(?:pharmaco|PK.?PD|clinical|remote|senior)\w*\s+role|role\b.*(?:pharmaco|PK|clinical|remote|senior)",
         re.IGNORECASE,
     ),
-    "announcement": re.compile(
-        r"\brelease\b|now available|version \d|new member|"
-        r"Wings for NONMEM|\bWFN\b|sad news|passing of|in memoriam|obituary|"
-        r"\bR package\b|\bpython package\b|an? \w+ package for",
+    "news": re.compile(
+        r"\breleased?\b|available from\b|now available|version \d|new member|"
+        r"Wings for NONMEM|\bWFN\b|sad news|passing of|passed away|funeral|in memoriam|obituary|"
+        r"\bR package\b|\bpython package\b|an? \w+ package for|"
+        r"^new software$|^new tool\b|software update|"
+        r"distribution of NONMEM|update.*available|"
+        r"^\w+ (?:design )?software\b|bug list|change\s*log|patch\b|"
+        r"discussion group\b|user group\b|citations.*archive|"
+        r"^new journal$",
         re.IGNORECASE,
     ),
 }
@@ -268,6 +288,14 @@ def load_data() -> pl.DataFrame:
     """Load and enrich the message dataset."""
     log.info(f"Loading {DATA_PATH}...")
     df = pl.read_parquet(DATA_PATH)
+
+    # Fix swapped from_name/subject fields (parsing artifact from cognigencorp)
+    swapped = df["from_name"].str.contains(r"^(?:Re:|RE:|Fwd?:|FW:|\[NMusers\])")
+    name_in_subject = ~df["subject"].str.contains(r"^(?:Re:|RE:|Fwd?:|FW:|\[NMusers\])") & swapped
+    df = df.with_columns(
+        pl.when(name_in_subject).then(pl.col("subject")).otherwise(pl.col("from_name")).alias("from_name"),
+        pl.when(name_in_subject).then(pl.col("from_name")).otherwise(pl.col("subject")).alias("subject"),
+    )
 
     # Reclassify with improved patterns
     df = df.with_columns(
@@ -306,6 +334,28 @@ def load_data() -> pl.DataFrame:
 
     # Sort by date for consistent ordering
     df = df.sort("date")
+
+    # Split threads with large time gaps (>30 days between consecutive messages)
+    # This prevents unrelated discussions with the same subject from being grouped
+    thread_epoch = {}
+    thread_keys = df["thread_key"].to_list()
+    dates = df["date"].to_list()
+    new_keys = []
+    for i, (tk, dt) in enumerate(zip(thread_keys, dates)):
+        if dt is None:
+            new_keys.append(tk)
+            continue
+        if tk not in thread_epoch:
+            thread_epoch[tk] = {"last_date": dt, "seq": 0}
+            new_keys.append(tk)
+        else:
+            gap = (dt - thread_epoch[tk]["last_date"]).days
+            if gap > 60:
+                thread_epoch[tk]["seq"] += 1
+            thread_epoch[tk]["last_date"] = dt
+            seq = thread_epoch[tk]["seq"]
+            new_keys.append(f"{tk}#{seq}" if seq > 0 else tk)
+    df = df.with_columns(pl.Series("thread_key", new_keys))
 
     # Assign sequential IDs within each year-month group
     df = df.with_columns(
@@ -392,10 +442,25 @@ def build_site(output_dir: Path):
         cats = year_cat_map.get(yd["year"], {})
         yd["technical"] = cats.get("technical", 0)
         yd["job"] = cats.get("job", 0)
-        yd["workshop"] = cats.get("workshop", 0)
-        yd["announcement"] = cats.get("announcement", 0)
+        yd["event"] = cats.get("event", 0)
+        yd["news"] = cats.get("news", 0)
         yd["admin"] = cats.get("admin", 0)
-    recent = [r for r in reversed(rows) if r["date"] is not None][:500]
+    recent = [r for r in reversed(rows) if r["date"] is not None]
+    initial_recent = recent[:30]
+    recent_years = sorted({r["year"] for r in recent}, reverse=True)
+    home_messages = [
+        {
+            "subject": r["subject"],
+            "url": r["url"],
+            "from_name": r["from_name"],
+            "author_slug": r["author_slug"],
+            "date_short": r["date_short"],
+            "category": r["category"],
+            "year": r["year"],
+            "thread_key": r["thread_key"],
+        }
+        for r in recent
+    ]
 
     source_counts = df.group_by("source").len().to_dicts()
     source_map = {r["source"]: r["len"] for r in source_counts}
@@ -410,7 +475,9 @@ def build_site(output_dir: Path):
         year_min=year_min,
         year_max=year_max,
         years=years_data,
-        recent_messages=recent,
+        recent_messages=initial_recent,
+        recent_years=recent_years,
+        home_messages_json=Markup(json.dumps(home_messages, separators=(",", ":"))),
     )
     (output_dir / "index.html").write_text(home_html, encoding="utf-8")
 
@@ -567,6 +634,8 @@ def build_site(output_dir: Path):
             month_num=f"{row['month']:02d}",
             month_name=MONTH_NAMES[row["month"]],
             body=clean_body(row["body_clean"]),
+            source=row["source"],
+            source_url=row.get("source_url", ""),
             thread_messages=thread_context,
             prev_url=prev_url,
             next_url=next_url,
@@ -682,7 +751,6 @@ def build_site(output_dir: Path):
 
     # --- Search index data ---
     log.info("Exporting search data...")
-    import json
 
     search_docs = []
     for r in rows:

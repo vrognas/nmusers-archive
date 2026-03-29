@@ -18,6 +18,7 @@
       <span>From: <a href="/authors/{{ author_slug }}/">{{ from_name }}</a></span>
       <span>Date: {{ date_long }}</span>
       <span class="badge badge-{{ category }}">{{ category }}</span>
+      {% if source_url %}<span>Source: <a href="{{ source_url }}">{% if source == "mail_archive" %}mail-archive.com{% elif source == "cognigencorp" %}cognigencorp.com{% elif source == "pipermail" %}cognigen.com{% elif source == "phor" %}phor.com{% else %}{{ source }}{% endif %}</a></span>{% endif %}
     </div>
   </div>
 

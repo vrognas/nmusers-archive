@@ -89,6 +89,9 @@
     // When help dialog is open, only handle Escape (handled by dialog's own listener)
     if (helpEl.classList.contains('visible')) return;
 
+    // Don't intercept when modifier keys are held (Cmd+F, Ctrl+F, etc.)
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
     var tag = document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
       if (e.key === 'Escape') document.activeElement.blur();

@@ -17,14 +17,14 @@
   --link: #8cbd7a;
   --link-hover: #b8bb26;
   --border: #504945;
-  --badge-technical: #3b7275;
-  --badge-job: #946d15;
-  --badge-workshop: #955375;
-  --badge-announcement: #689a74;
-  --badge-technical-fg: #fff;
-  --badge-job-fg: #fff;
-  --badge-workshop-fg: #fff;
-  --badge-announcement-fg: #1d2021;
+  --badge-technical: #6e9a9d;
+  --badge-job: #b89d57;
+  --badge-event: #b88ca3;
+  --badge-news: #c49472;
+  --badge-technical-fg: #1d2021;
+  --badge-job-fg: #1d2021;
+  --badge-event-fg: #1d2021;
+  --badge-news-fg: #1d2021;
   --badge-admin-fg: #1d2021;
   --fg-on-accent: #1d2021;
   --code-bg: #1d2021;
@@ -48,14 +48,14 @@
   --link: #427b58;
   --link-hover: #79740e;
   --border: #dddddd;
-  --badge-technical: #076678;
-  --badge-job: #8a6210;
-  --badge-workshop: #8f3f71;
-  --badge-announcement: #427b58;
+  --badge-technical: #3e6d71;
+  --badge-job: #84671b;
+  --badge-event: #84546d;
+  --badge-news: #8d5934;
   --badge-technical-fg: #fff;
   --badge-job-fg: #fff;
-  --badge-workshop-fg: #fff;
-  --badge-announcement-fg: #fff;
+  --badge-event-fg: #fff;
+  --badge-news-fg: #fff;
   --badge-admin-fg: #fff;
   --fg-on-accent: #fff;
   --code-bg: #f7f7f7;
@@ -270,6 +270,7 @@ main {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
+  contain: layout style;
 }
 .msg-table th {
   text-align: left;
@@ -302,8 +303,8 @@ main {
 }
 .badge-technical { background: var(--badge-technical); color: var(--badge-technical-fg); }
 .badge-job { background: var(--badge-job); color: var(--badge-job-fg); }
-.badge-workshop { background: var(--badge-workshop); color: var(--badge-workshop-fg); }
-.badge-announcement { background: var(--badge-announcement); color: var(--badge-announcement-fg); }
+.badge-event { background: var(--badge-event); color: var(--badge-event-fg); }
+.badge-news { background: var(--badge-news); color: var(--badge-news-fg); }
 .badge-admin { background: var(--fg-muted); color: var(--badge-admin-fg); }
 
 /* Message page */
@@ -463,8 +464,8 @@ main {
 .cat-toggle.active { opacity: 1; color: var(--fg-on-accent); }
 .cat-toggle[data-cat="technical"].active { background: var(--badge-technical); border-color: var(--badge-technical); color: var(--badge-technical-fg); }
 .cat-toggle[data-cat="job"].active { background: var(--badge-job); border-color: var(--badge-job); color: var(--badge-job-fg); }
-.cat-toggle[data-cat="workshop"].active { background: var(--badge-workshop); border-color: var(--badge-workshop); color: var(--badge-workshop-fg); }
-.cat-toggle[data-cat="announcement"].active { background: var(--badge-announcement); border-color: var(--badge-announcement); color: var(--badge-announcement-fg); }
+.cat-toggle[data-cat="event"].active { background: var(--badge-event); border-color: var(--badge-event); color: var(--badge-event-fg); }
+.cat-toggle[data-cat="news"].active { background: var(--badge-news); border-color: var(--badge-news); color: var(--badge-news-fg); }
 .cat-toggle[data-cat="admin"].active { background: var(--fg-muted); border-color: var(--fg-muted); color: var(--badge-admin-fg); }
 .cat-toggle:hover { opacity: 0.8; }
 
@@ -588,6 +589,14 @@ main {
 
 .msg-hidden { display: none; }
 
+/* Category filter classes (toggled on .msg-table) */
+.msg-table.filtering tr.msg-hidden { display: revert; }
+.msg-table.hide-technical tr[data-cat="technical"] { display: none; }
+.msg-table.hide-event tr[data-cat="event"] { display: none; }
+.msg-table.hide-job tr[data-cat="job"] { display: none; }
+.msg-table.hide-news tr[data-cat="news"] { display: none; }
+.msg-table.hide-admin tr[data-cat="admin"] { display: none; }
+
 /* Breadcrumbs */
 .breadcrumb {
   font-size: 0.85rem;
@@ -656,7 +665,8 @@ main {
 /* Card utilities */
 .card-note { margin-top: 0.5rem; }
 .card-footnote { margin-top: 0.5rem; font-size: 0.85rem; color: var(--fg-muted); }
-.card-chart { padding: 1rem; --chart-height: 180; }
+.card-chart { padding: 1rem; --chart-height: 180; overflow: hidden; }
+.card-chart svg { display: block; }
 
 /* Thread page */
 .thread-participants { color: var(--fg-muted); font-size: 0.8rem; }

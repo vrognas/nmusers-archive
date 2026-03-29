@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}NMusers Archive &mdash; NONMEM Mailing List{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+{% endblock %}
 
 {% block content %}
 <h1>NMusers Mailing List Archive</h1>
@@ -35,16 +38,15 @@
 </dl>
 
 <h2>Messages Over Time</h2>
-<div class="card card-chart">
-  <canvas id="year-chart" height="120" role="img" aria-label="Stacked bar chart showing NMusers messages per year from {{ year_min }} to {{ year_max }}, colored by category"></canvas>
+<div class="card card-chart" id="year-chart" role="img" aria-label="Stacked bar chart showing NMusers messages per year from {{ year_min }} to {{ year_max }}, colored by category">
   <table class="sr-only">
     <caption>Messages per year by category</caption>
     <thead>
-      <tr><th>Year</th><th>Technical</th><th>Job</th><th>Workshop</th><th>Announcement</th><th>Admin</th><th>Total</th></tr>
+      <tr><th>Year</th><th>Technical</th><th>Job</th><th>Event</th><th>News</th><th>Admin</th><th>Total</th></tr>
     </thead>
     <tbody>
       {% for y in years %}
-      <tr><td>{{ y.year }}</td><td>{{ y.technical }}</td><td>{{ y.job }}</td><td>{{ y.workshop }}</td><td>{{ y.announcement }}</td><td>{{ y.admin }}</td><td>{{ y.count }}</td></tr>
+      <tr><td>{{ y.year }}</td><td>{{ y.technical }}</td><td>{{ y.job }}</td><td>{{ y.event }}</td><td>{{ y.news }}</td><td>{{ y.admin }}</td><td>{{ y.count }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -61,8 +63,8 @@
   <div class="filter-group">
     <h3 class="filter-heading">View</h3>
     <div class="filter-options">
-      <button class="sort-btn active" data-view="date" aria-pressed="true">By date</button>
-      <button class="sort-btn" data-view="thread" aria-pressed="false">By thread</button>
+      <button class="sort-btn" data-view="date" aria-pressed="false">By date</button>
+      <button class="sort-btn active" data-view="thread" aria-pressed="true">By thread</button>
     </div>
   </div>
   <div class="filter-group">
@@ -70,8 +72,8 @@
     <div class="filter-options">
       <button class="cat-toggle active" data-cat="technical" aria-pressed="true">Technical</button>
       <button class="cat-toggle active" data-cat="job" aria-pressed="true">Job</button>
-      <button class="cat-toggle active" data-cat="workshop" aria-pressed="true">Workshop</button>
-      <button class="cat-toggle active" data-cat="announcement" aria-pressed="true">Announcement</button>
+      <button class="cat-toggle active" data-cat="event" aria-pressed="true">Event</button>
+      <button class="cat-toggle active" data-cat="news" aria-pressed="true">News</button>
       <button class="cat-toggle active" data-cat="admin" aria-pressed="true">Admin</button>
     </div>
   </div>
@@ -79,8 +81,8 @@
     <h3 class="filter-heading">Year</h3>
     <div class="filter-options filter-options--year">
       <button class="sort-btn active" data-year="all" aria-pressed="true">All</button>
-      {% for year in years | reverse %}
-      <button class="sort-btn" data-year="{{ year.year }}" aria-pressed="false">{{ year.year }}</button>
+      {% for year in recent_years %}
+      <button class="sort-btn active" data-year="{{ year }}" aria-pressed="true">{{ year }}</button>
       {% endfor %}
     </div>
   </div>
@@ -98,7 +100,7 @@
   </thead>
   <tbody>
     {% for msg in recent_messages %}
-    <tr data-cat="{{ msg.category }}" data-year="{{ msg.year }}"{% if loop.index > 30 %} class="msg-hidden"{% endif %}>
+    <tr data-cat="{{ msg.category }}" data-year="{{ msg.year }}">
       <td class="date-col">{{ msg.date_short }}</td>
       <td class="author-col"><a href="/authors/{{ msg.author_slug }}/">{{ msg.from_name }}</a></td>
       <td class="subject-col">
@@ -111,14 +113,12 @@
     {% endfor %}
   </tbody>
 </table>
-{% if recent_messages | length > 30 %}
-<div class="load-more-wrap">
+<div class="load-more-wrap" style="display: none;">
   <button id="load-more" class="sort-btn load-more-btn">Load more</button>
   <p id="browse-hint" class="search-status browse-hint">
     Browse all messages by <a href="/{{ year_max }}/">year</a> or use <a href="/search/">search</a>.
   </p>
 </div>
-{% endif %}
 </div>
 <table class="msg-table" id="thread-view" style="display: none;" aria-label="Messages grouped by thread">
   <thead>
@@ -137,34 +137,75 @@
 {% endblock %}
 
 {% block scripts %}
+<script id="home-messages-data" type="application/json">{{ home_messages_json }}</script>
 <script>
 (function () {
   var catBtns = document.querySelectorAll(".cat-toggle");
-  var yearBtns = document.querySelectorAll(".sort-btn[data-year]");
+  var allYearBtn = document.querySelector(".sort-btn[data-year='all']");
+  var yearBtns = document.querySelectorAll(".sort-btn[data-year]:not([data-year='all'])");
   var viewBtns = document.querySelectorAll(".sort-btn[data-view]");
   var dateView = document.getElementById("date-view");
   var threadView = document.getElementById("thread-view");
-  var rows = document.querySelectorAll(".msg-table tbody tr[data-cat]");
-  var activeYear = "all";
+  var dateTable = dateView.querySelector('.msg-table');
+  var dateTbody = dateTable.querySelector('tbody');
+  var threadTbody = threadView.querySelector('tbody');
+  var loadMoreWrap = document.querySelector('.load-more-wrap');
+  var loadMoreBtn = document.getElementById('load-more');
+  var browseHint = document.getElementById('browse-hint');
+  var messagesEl = document.getElementById('home-messages-data');
+  var messages = messagesEl ? JSON.parse(messagesEl.textContent) : [];
 
-  // Build message data for thread view from table rows
-  var messages = [];
-  rows.forEach(function (row) {
-    var subjectLink = row.querySelector(".subject-col a");
-    var authorLink = row.querySelector(".author-col a");
-    var badge = row.querySelector(".cat-col .badge");
-    messages.push({
-      subject: subjectLink ? subjectLink.textContent : "",
-      url: subjectLink ? subjectLink.getAttribute("href") : "",
-      author: authorLink ? authorLink.textContent : "",
-      authorUrl: authorLink ? authorLink.getAttribute("href") : "",
-      date: row.querySelector(".date-col") ? row.querySelector(".date-col").textContent : "",
-      cat: row.dataset.cat,
-      year: row.dataset.year,
-      badgeClass: badge ? badge.className : "",
-      badgeText: badge ? badge.textContent : "",
+  if (messagesEl) messagesEl.remove();
+
+  function messageAuthorUrl(msg) {
+    return "/authors/" + msg.author_slug + "/";
+  }
+
+  function buildMessageRow(msg, isReply) {
+    var tr = document.createElement("tr");
+    tr.dataset.cat = msg.category;
+    tr.dataset.year = msg.year;
+    if (isReply) tr.className = "thread-reply";
+
+    var dateTd = document.createElement("td");
+    dateTd.className = "date-col";
+    dateTd.textContent = msg.date_short;
+    tr.appendChild(dateTd);
+
+    var authorTd = document.createElement("td");
+    authorTd.className = "author-col";
+    var authorA = document.createElement("a");
+    authorA.href = messageAuthorUrl(msg);
+    authorA.textContent = msg.from_name;
+    authorTd.appendChild(authorA);
+    tr.appendChild(authorTd);
+
+    var subjectTd = document.createElement("td");
+    subjectTd.className = "subject-col";
+    var subjectA = document.createElement("a");
+    subjectA.href = msg.url;
+    subjectA.textContent = msg.subject;
+    subjectTd.appendChild(subjectA);
+    tr.appendChild(subjectTd);
+
+    var catTd = document.createElement("td");
+    catTd.className = "cat-col";
+    var badge = document.createElement("span");
+    badge.className = "badge badge-" + msg.category;
+    badge.textContent = msg.category;
+    catTd.appendChild(badge);
+    tr.appendChild(catTd);
+
+    return tr;
+  }
+
+  function renderRows(tbody, rowData) {
+    var fragment = document.createDocumentFragment();
+    rowData.forEach(function (entry) {
+      fragment.appendChild(buildMessageRow(entry.msg, entry.isReply));
     });
-  });
+    tbody.replaceChildren(fragment);
+  }
 
   function getActiveCats() {
     var cats = [];
@@ -172,120 +213,518 @@
     return cats;
   }
 
-  function filterDateRows() {
-    var cats = getActiveCats();
-    rows.forEach(function (row) {
-      if (row.classList.contains("msg-hidden")) return;
-      var catMatch = cats.indexOf(row.dataset.cat) !== -1;
-      var yearMatch = activeYear === "all" || row.dataset.year === activeYear;
-      row.style.display = (catMatch && yearMatch) ? "" : "none";
+  function getActiveYears() {
+    var years = [];
+    yearBtns.forEach(function (b) { if (b.classList.contains("active")) years.push(b.dataset.year); });
+    return years;
+  }
+
+  function allYearsActive() {
+    var years = getActiveYears();
+    return years.length === yearBtns.length;
+  }
+
+  function syncAllBtn() {
+    var all = allYearsActive();
+    allYearBtn.classList.toggle("active", all);
+    allYearBtn.setAttribute("aria-pressed", all);
+  }
+
+  function getFilterState() {
+    var activeCats = getActiveCats();
+    var activeYears = getActiveYears();
+    var allYears = activeYears.length === yearBtns.length;
+    return {
+      activeCats: activeCats,
+      activeYears: activeYears,
+      allYears: allYears,
+      filtering: !allYears || activeCats.length < catBtns.length,
+      noCats: activeCats.length === 0,
+      noYears: activeYears.length === 0,
+    };
+  }
+
+  function filterMessages(state) {
+    return messages.filter(function (msg) {
+      var catMatch = state.activeCats.indexOf(msg.category) !== -1;
+      var yearMatch = state.allYears || state.activeYears.indexOf(String(msg.year)) !== -1;
+      return catMatch && yearMatch;
     });
   }
 
-  function normalizeSubject(s) {
-    var c = s;
-    while (true) {
-      var n = c.replace(/^(Re:|RE:|Fwd:|FW:|Fw:|re:)\s*/, "").replace(/^\[NMusers\]\s*/i, "").trim();
-      if (n === c) break;
-      c = n;
-    }
-    return c.toLowerCase();
-  }
-
-  function buildThreadView() {
-    var cats = getActiveCats();
+  function buildThreadRows(filteredMessages) {
     var threads = {};
     var threadOrder = [];
+    var rows = [];
 
-    messages.forEach(function (msg) {
-      var catMatch = cats.indexOf(msg.cat) !== -1;
-      var yearMatch = activeYear === "all" || msg.year === activeYear;
-      if (!catMatch || !yearMatch) return;
-
-      var tk = normalizeSubject(msg.subject);
-      if (!threads[tk]) {
-        threads[tk] = [];
-        threadOrder.push(tk);
+    filteredMessages.forEach(function (msg) {
+      var threadKey = msg.thread_key || msg.subject;
+      if (!threads[threadKey]) {
+        threads[threadKey] = [];
+        threadOrder.push(threadKey);
       }
-      threads[tk].push(msg);
+      threads[threadKey].push(msg);
     });
 
-    // Threads with most recent message first; reverse within each thread (oldest first)
-    threadOrder.forEach(function (tk) { threads[tk].reverse(); });
+    threadOrder.forEach(function (threadKey) {
+      var threadMessages = threads[threadKey].slice().reverse();
+      threadMessages.forEach(function (msg, index) {
+        rows.push({ msg: msg, isReply: index > 0 && threadMessages.length > 1 });
+      });
+    });
 
-    var threadTbody = threadView.querySelector("tbody");
-    threadTbody.textContent = "";
-    threadOrder.forEach(function (tk) {
-      var msgs = threads[tk];
-      msgs.forEach(function (msg, i) {
-        var tr = document.createElement("tr");
-        if (i > 0 && msgs.length > 1) tr.className = "thread-reply";
+    return rows;
+  }
 
-        var dateTd = document.createElement("td");
-        dateTd.className = "date-col";
-        dateTd.textContent = msg.date;
-        tr.appendChild(dateTd);
+  function renderDateRows(filteredMessages) {
+    renderRows(dateTbody, filteredMessages.slice(0, visibleLimit).map(function (msg) {
+      return { msg: msg, isReply: false };
+    }));
+    return filteredMessages.length;
+  }
 
-        var authorTd = document.createElement("td");
-        authorTd.className = "author-col";
-        var authorA = document.createElement("a");
-        authorA.href = msg.authorUrl;
-        authorA.textContent = msg.author;
-        authorTd.appendChild(authorA);
-        tr.appendChild(authorTd);
+  function renderThreadRows(filteredMessages) {
+    var threadRows = buildThreadRows(filteredMessages);
+    renderRows(threadTbody, threadRows.slice(0, visibleLimit));
+    return threadRows.length;
+  }
 
-        var subjectTd = document.createElement("td");
-        subjectTd.className = "subject-col";
-        var subjectA = document.createElement("a");
-        subjectA.href = msg.url;
-        subjectA.textContent = msg.subject;
-        subjectTd.appendChild(subjectA);
-        tr.appendChild(subjectTd);
+  function updateLoadMore(totalCount, state) {
+    if (!loadMoreWrap || !loadMoreBtn) return;
 
-        var catTd = document.createElement("td");
-        catTd.className = "cat-col";
-        var badge = document.createElement("span");
-        badge.className = msg.badgeClass;
-        badge.textContent = msg.badgeText;
-        catTd.appendChild(badge);
-        tr.appendChild(catTd);
+    var shown = Math.min(visibleLimit, totalCount);
+    var hasMore = shown < totalCount;
+    var showBrowseHint = !state.filtering && !hasMore && totalCount > 0;
 
-        threadTbody.appendChild(tr);
+    loadMoreBtn.textContent = hasMore ? "Load more (" + shown + " / " + totalCount + ")" : "Load more";
+    loadMoreBtn.style.display = hasMore ? "" : "none";
+    if (browseHint) browseHint.style.display = showBrowseHint ? "" : "none";
+    loadMoreWrap.style.display = hasMore || showBrowseHint ? "" : "none";
+  }
+
+  // --- Interactive D3 chart ---
+  var chartData = [{% for y in years %}{ year: {{ y.year }}, count: {{ y.count }}, technical: {{ y.technical }}, job: {{ y.job }}, event: {{ y.event }}, news: {{ y.news }}, admin: {{ y.admin }} }{% if not loop.last %},{% endif %}{% endfor %}];
+  var releases = [
+    { year: 1998, label: "V" },
+    { year: 2006, label: "VI" },
+    { year: 2009, label: "7.1" },
+    { year: 2010, label: "7.1.2" },
+    { year: 2011, label: "7.2" },
+    { year: 2013, label: "7.3" },
+    { year: 2017, label: "7.4" },
+    { year: 2018, label: "7.4.2/3" },
+    { year: 2019, label: "7.4.4" },
+    { year: 2020, label: "7.5" },
+    { year: 2022, label: "7.5.1" },
+    { year: 2024, label: "7.6" },
+  ];
+  var chartEl = document.getElementById('year-chart');
+  var catOrder = ['technical', 'event', 'job', 'news', 'admin'];
+
+  // SVG pattern definitions for colorblind accessibility
+  var patternDefs = {
+    technical: function () {},  // solid
+    event: function (p, sz) {   // diagonal lines
+      p.append('line').attr('x1',0).attr('y1',sz).attr('x2',sz).attr('y2',0)
+        .attr('stroke','rgba(255,255,255,0.25)').attr('stroke-width',1);
+    },
+    job: function (p, sz) {     // dots
+      p.append('circle').attr('cx',sz/2).attr('cy',sz/2).attr('r',1.5)
+        .attr('fill','rgba(255,255,255,0.3)');
+    },
+    news: function (p, sz) {    // horizontal lines
+      p.append('line').attr('x1',0).attr('y1',sz/2).attr('x2',sz).attr('y2',sz/2)
+        .attr('stroke','rgba(255,255,255,0.25)').attr('stroke-width',1);
+    },
+    admin: function (p, sz) {   // crosshatch
+      p.append('line').attr('x1',0).attr('y1',sz).attr('x2',sz).attr('y2',0)
+        .attr('stroke','rgba(0,0,0,0.15)').attr('stroke-width',1);
+      p.append('line').attr('x1',0).attr('y1',0).attr('x2',sz).attr('y2',sz)
+        .attr('stroke','rgba(0,0,0,0.15)').attr('stroke-width',1);
+    },
+  };
+
+  var svg, xScale, yScale, chartWidth, chartHeight, margin, defs, barsG;
+  var tooltip;
+  var chartTransitionMs = 280;
+
+  function getChartMax(data) {
+    var max = d3.max(data, function (d) { return d.filteredCount; });
+    return max && max > 0 ? max : 1;
+  }
+
+  function setupChart() {
+    if (!chartEl) return;
+    d3.select(chartEl).selectAll('svg').remove();
+    d3.select(chartEl).selectAll('.chart-tooltip').remove();
+
+    var cs = getComputedStyle(chartEl);
+    var totalW = chartEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var totalH = parseInt(getComputedStyle(chartEl).getPropertyValue('--chart-height')) || 180;
+    margin = { top: 28, right: 4, bottom: 18, left: 4 };
+    chartWidth = totalW - margin.left - margin.right;
+    chartHeight = totalH - margin.top - margin.bottom;
+
+    svg = d3.select(chartEl).append('svg')
+      .attr('width', totalW).attr('height', totalH);
+
+    defs = svg.append('defs');
+
+    var g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+    xScale = d3.scaleBand()
+      .domain(chartData.map(function (d) { return d.year; }))
+      .range([0, chartWidth])
+      .padding(0.15);
+
+    yScale = d3.scaleLinear()
+      .domain([0, d3.max(chartData, function (d) { return d.count; }) || 1])
+      .range([chartHeight, 0]);
+
+    // Release markers (always visible, behind bars)
+    var markersG = g.append('g').attr('class', 'markers');
+    var style = getComputedStyle(document.documentElement);
+    var mutedColor = style.getPropertyValue('--fg-muted').trim();
+    var borderColor = style.getPropertyValue('--border').trim();
+
+    releases.forEach(function (r, ri) {
+      var x = xScale(r.year);
+      if (x === undefined) return;
+      x += xScale.bandwidth() / 2;
+      markersG.append('line')
+        .attr('x1', x).attr('x2', x)
+        .attr('y1', 0).attr('y2', chartHeight)
+        .attr('stroke', borderColor)
+        .attr('stroke-dasharray', '3,3');
+      markersG.append('text')
+        .attr('x', x)
+        .attr('y', ri % 2 === 0 ? -14 : -4)
+        .attr('text-anchor', 'middle')
+        .attr('fill', mutedColor)
+        .attr('font-size', '9px')
+        .text('NM ' + r.label);
+    });
+
+    // Bars group
+    barsG = g.append('g').attr('class', 'bars');
+
+    // Year labels (every 5th year)
+    var labelsG = g.append('g').attr('class', 'labels');
+    chartData.forEach(function (d) {
+      if (d.year % 5 === 0) {
+        labelsG.append('text')
+          .attr('x', xScale(d.year) + xScale.bandwidth() / 2)
+          .attr('y', chartHeight + 14)
+          .attr('text-anchor', 'middle')
+          .attr('fill', mutedColor)
+          .attr('font-size', '10px')
+          .text(d.year);
+      }
+    });
+
+    // Tooltip
+    tooltip = d3.select(chartEl).append('div')
+      .attr('class', 'chart-tooltip')
+      .style('position', 'absolute')
+      .style('display', 'none')
+      .style('background', 'var(--bg-card)')
+      .style('border', '1px solid var(--border)')
+      .style('border-radius', '4px')
+      .style('padding', '0.25rem 0.5rem')
+      .style('font-size', '0.8rem')
+      .style('color', 'var(--fg)')
+      .style('pointer-events', 'none')
+      .style('white-space', 'nowrap')
+      .style('z-index', '10');
+
+    chartEl.style.position = 'relative';
+  }
+
+  function getCatColor(cat) {
+    var style = getComputedStyle(document.documentElement);
+    if (cat === 'admin') return style.getPropertyValue('--fg-muted').trim();
+    return style.getPropertyValue('--badge-' + cat).trim();
+  }
+
+  function updatePatterns() {
+    if (!defs) return;
+    defs.selectAll('pattern').remove();
+    var sz = 8;
+    catOrder.forEach(function (cat) {
+      var p = defs.append('pattern')
+        .attr('id', 'pat-' + cat)
+        .attr('width', sz).attr('height', sz)
+        .attr('patternUnits', 'userSpaceOnUse');
+      p.append('rect').attr('width', sz).attr('height', sz).attr('fill', getCatColor(cat));
+      patternDefs[cat](p, sz);
+    });
+  }
+
+  function buildFilteredChartData(state) {
+    return chartData.map(function (d) {
+      var yearActive = state.allYears || state.activeYears.indexOf(String(d.year)) !== -1;
+      var row = {
+        year: d.year,
+        count: d.count,
+        filteredCount: 0,
+      };
+      catOrder.forEach(function (cat) {
+        var value = yearActive && state.activeCats.indexOf(cat) !== -1 ? d[cat] : 0;
+        row[cat] = value;
+        row.filteredCount += value;
+      });
+      return row;
+    });
+  }
+
+  function showTooltip(event, d) {
+    if (!tooltip || d.filteredCount === 0) {
+      if (tooltip) tooltip.style('display', 'none');
+      return;
+    }
+    var label = d.year + ': ' + d.filteredCount + ' messages';
+    if (d.filteredCount !== d.count) label += ' (' + d.count + ' total)';
+    var rect = chartEl.getBoundingClientRect();
+    tooltip
+      .style('display', 'block')
+      .text(label)
+      .style('left', Math.max(0, Math.min(event.clientX - rect.left, rect.width - 150)) + 'px')
+      .style('top', Math.max(0, event.clientY - rect.top - 30) + 'px');
+  }
+
+  function hideTooltip() {
+    if (tooltip) tooltip.style('display', 'none');
+  }
+
+  function updateChart(state) {
+    if (!chartEl || !svg) return;
+
+    hideTooltip();
+
+    var filterState = state || getFilterState();
+    var filteredChartData = buildFilteredChartData(filterState);
+    yScale.domain([0, getChartMax(filteredChartData)]);
+
+    var stack = d3.stack()
+      .keys(catOrder)
+      .order(d3.stackOrderNone)
+      .offset(d3.stackOffsetNone);
+
+    var series = stack(filteredChartData);
+
+    // Bind category layers (always 5, stable)
+    var layers = barsG.selectAll('.layer').data(series, function (d) { return d.key; });
+
+    var layersEnter = layers.enter().append('g').attr('class', 'layer');
+    var layersMerged = layersEnter.merge(layers);
+    layers.exit().remove();
+
+    // Bind bars within each layer
+    layersMerged.each(function (layerData) {
+      var cat = layerData.key;
+      var rects = d3.select(this).selectAll('rect')
+        .data(layerData, function (d) { return d.data.year; });
+
+      var enter = rects.enter().append('rect')
+        .attr('x', function (d) { return xScale(d.data.year); })
+        .attr('width', xScale.bandwidth())
+        .attr('y', yScale(0))
+        .attr('height', 0)
+        .attr('fill', 'url(#pat-' + cat + ')');
+
+      rects.exit().remove();
+
+      enter.merge(rects)
+        .attr('fill', 'url(#pat-' + cat + ')')
+        .attr('pointer-events', function (d) { return d.data.filteredCount === 0 ? 'none' : 'auto'; })
+        .on('mousemove', function (event, d) { showTooltip(event, d.data); })
+        .on('mouseleave', hideTooltip)
+        .interrupt('filter')
+        .transition('filter').duration(chartTransitionMs).ease(d3.easeCubicOut)
+        .attr('y', function (d) { return yScale(d[1]); })
+        .attr('height', function (d) { return yScale(d[0]) - yScale(d[1]); })
+        .attr('opacity', function (d) { return d[1] - d[0] === 0 ? 0 : 1; });
+    });
+  }
+
+  function drawChart() {
+    var filterState = getFilterState();
+    setupChart();
+    updatePatterns();
+    updateChart(filterState);
+  }
+
+  if (chartEl) {
+    drawChart();
+    new MutationObserver(function () { drawChart(); }).observe(
+      document.documentElement,
+      { attributes: true, attributeFilter: ['data-theme'] }
+    );
+    var resizeTimer;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(drawChart, 150);
+    });
+  }
+
+  // --- Filter/view handlers ---
+  var visibleLimit = 30;
+  var currentState = getFilterState();
+  var currentFilteredMessages = filterMessages(currentState);
+
+  // Empty state element (created once)
+  var emptyMsg = document.createElement('p');
+  emptyMsg.id = 'filter-empty';
+  emptyMsg.className = 'search-status';
+  emptyMsg.textContent = 'No messages match the selected filters. Try enabling more categories or years.';
+  emptyMsg.style.display = 'none';
+  dateView.parentNode.insertBefore(emptyMsg, dateView);
+
+  var tablePaintFrame = 0;
+  var tableRenderFrame = 0;
+
+  function syncViews(state, filteredMessages) {
+    var isThread = document.querySelector(".sort-btn[data-view='thread']").classList.contains("active");
+    var totalCount;
+
+    if (isThread) {
+      dateView.style.display = "none";
+      threadView.style.display = "";
+      totalCount = renderThreadRows(filteredMessages);
+    } else {
+      dateView.style.display = "";
+      threadView.style.display = "none";
+      totalCount = renderDateRows(filteredMessages);
+    }
+
+    updateLoadMore(totalCount, state);
+  }
+
+  function scheduleViewSync(state, filteredMessages) {
+    if (tablePaintFrame) cancelAnimationFrame(tablePaintFrame);
+    if (tableRenderFrame) cancelAnimationFrame(tableRenderFrame);
+
+    tablePaintFrame = requestAnimationFrame(function () {
+      tablePaintFrame = 0;
+      tableRenderFrame = requestAnimationFrame(function () {
+        tableRenderFrame = 0;
+        syncViews(state, filteredMessages);
       });
     });
   }
 
-  function render() {
-    var isThread = document.querySelector(".sort-btn[data-view='thread']").classList.contains("active");
-    if (isThread) {
-      dateView.style.display = "none";
-      threadView.style.display = "";
-      buildThreadView();
-    } else {
-      dateView.style.display = "";
-      threadView.style.display = "none";
-      rows.forEach(function (r) { r.classList.remove("msg-hidden"); });
-      filterDateRows();
+  // --- URL hash persistence for filter state ---
+  function saveFilterToHash(state) {
+    var parts = [];
+    if (!state.allYears) {
+      parts.push('y=' + state.activeYears.join(','));
     }
+    if (state.activeCats.length < catBtns.length) {
+      parts.push('c=' + state.activeCats.join(','));
+    }
+    var isThread = document.querySelector(".sort-btn[data-view='thread']").classList.contains("active");
+    if (!isThread) parts.push('v=date');
+    history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname);
+  }
+
+  function restoreFilterFromHash() {
+    var hash = location.hash.slice(1);
+    if (!hash) return;
+    var params = {};
+    hash.split('&').forEach(function (p) {
+      var kv = p.split('=');
+      if (kv.length === 2) params[kv[0]] = kv[1];
+    });
+
+    if (params.y) {
+      var activeYrs = params.y.split(',');
+      yearBtns.forEach(function (b) {
+        var on = activeYrs.indexOf(b.dataset.year) !== -1;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on);
+      });
+      syncAllBtn();
+    }
+    if (params.c) {
+      var activeCats = params.c.split(',');
+      catBtns.forEach(function (b) {
+        var on = activeCats.indexOf(b.dataset.cat) !== -1;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on);
+      });
+    }
+    if (params.v === 'date') {
+      viewBtns.forEach(function (b) {
+        var on = b.dataset.view === 'date';
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on);
+      });
+    }
+  }
+
+  restoreFilterFromHash();
+
+  function render() {
+    var state = getFilterState();
+    var filteredMessages = filterMessages(state);
+
+    currentState = state;
+    currentFilteredMessages = filteredMessages;
+
+    // Persist filter state to URL hash
+    saveFilterToHash(state);
+
+    // Update the plot first so filter feedback lands in the same frame as the click.
+    updateChart(state);
+
+    // Keep non-layout UI work synchronous.
+    emptyMsg.style.display = filteredMessages.length === 0 ? '' : 'none';
+
+    // Show/hide load-more immediately (cheap, no DOM churn)
+    updateLoadMore(filteredMessages.length, state);
+
+    // Let the chart paint, then sync heavier table DOM work on the next frame.
+    scheduleViewSync(state, filteredMessages);
   }
 
   catBtns.forEach(function (btn) {
     btn.addEventListener("click", function () {
       btn.classList.toggle("active");
       btn.setAttribute("aria-pressed", btn.classList.contains("active"));
+      visibleLimit = 30;
       render();
     });
   });
 
+  // "All" button: toggle all years on or off
+  allYearBtn.addEventListener("click", function () {
+    var turnOn = !allYearsActive();
+    yearBtns.forEach(function (b) {
+      b.classList.toggle("active", turnOn);
+      b.setAttribute("aria-pressed", turnOn);
+    });
+    syncAllBtn();
+    visibleLimit = 30;
+    render();
+  });
+
+  // Individual year buttons: click selects only that year when all are active, otherwise toggles
   yearBtns.forEach(function (btn) {
     btn.addEventListener("click", function () {
-      yearBtns.forEach(function (b) {
-        b.classList.remove("active");
-        b.setAttribute("aria-pressed", "false");
-      });
-      btn.classList.add("active");
-      btn.setAttribute("aria-pressed", "true");
-      activeYear = btn.dataset.year;
+      if (allYearsActive()) {
+        // All years active → select only this year
+        yearBtns.forEach(function (b) {
+          b.classList.remove("active");
+          b.setAttribute("aria-pressed", "false");
+        });
+        btn.classList.add("active");
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        btn.classList.toggle("active");
+        btn.setAttribute("aria-pressed", btn.classList.contains("active"));
+      }
+      syncAllBtn();
+      visibleLimit = 30;
       render();
     });
   });
@@ -301,171 +740,18 @@
       render();
     });
   });
-})();
-</script>
-<script>
-// Year chart with NONMEM release markers
-(function () {
-  var data = [{% for y in years %}{ year: {{ y.year }}, count: {{ y.count }}, technical: {{ y.technical }}, job: {{ y.job }}, workshop: {{ y.workshop }}, announcement: {{ y.announcement }}, admin: {{ y.admin }} }{% if not loop.last %},{% endif %}{% endfor %}];
-  var releases = [
-    { year: 1998, label: "V" },
-    { year: 2006, label: "VI" },
-    { year: 2009, label: "7.1" },
-    { year: 2010, label: "7.1.2" },
-    { year: 2011, label: "7.2" },
-    { year: 2013, label: "7.3" },
-    { year: 2017, label: "7.4" },
-    { year: 2018, label: "7.4.2/3" },
-    { year: 2019, label: "7.4.4" },
-    { year: 2020, label: "7.5" },
-    { year: 2022, label: "7.5.1" },
-    { year: 2024, label: "7.6" },
-  ];
 
-  var canvas = document.getElementById('year-chart');
-  if (!canvas) return;
-
-  function drawChart() {
-    var ctx = canvas.getContext('2d');
-    var dpr = window.devicePixelRatio || 1;
-    var w = canvas.parentElement.clientWidth - 32;
-    var h = parseInt(getComputedStyle(canvas.parentElement).getPropertyValue('--chart-height')) || 180;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    ctx.scale(dpr, dpr);
-
-    var maxCount = Math.max.apply(null, data.map(function (d) { return d.count; }));
-    var barW = Math.max(2, (w - data.length * 2) / data.length);
-    var gap = 2;
-    var chartTop = 28;
-    var chartH = h - chartTop - 16;
-    var style = getComputedStyle(document.documentElement);
-    var mutedColor = style.getPropertyValue('--fg-muted').trim();
-    var borderColor = style.getPropertyValue('--border').trim();
-
-    var yearMin = data[0].year;
-
-    // Draw release markers first (behind bars)
-    releases.forEach(function (r, ri) {
-      var idx = r.year - yearMin;
-      if (idx < 0 || idx >= data.length) return;
-      var x = idx * (barW + gap) + barW / 2;
-      ctx.strokeStyle = borderColor;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      ctx.moveTo(x, chartTop);
-      ctx.lineTo(x, chartTop + chartH);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = mutedColor;
-      ctx.font = '9px sans-serif';
-      ctx.textAlign = 'center';
-      var labelY = (ri % 2 === 0) ? chartTop - 14 : chartTop - 4;
-      ctx.fillText('NM ' + r.label, x, labelY);
-    });
-
-    // Category colors (match CSS badge colors)
-    var catColors = {
-      technical: style.getPropertyValue('--badge-technical').trim(),
-      workshop: style.getPropertyValue('--badge-workshop').trim(),
-      job: style.getPropertyValue('--badge-job').trim(),
-      announcement: style.getPropertyValue('--badge-announcement').trim(),
-      admin: mutedColor,
-    };
-    var catOrder = ['technical', 'workshop', 'job', 'announcement', 'admin'];
-
-    // Create patterns for colorblind accessibility
-    function makePattern(color, draw) {
-      var pc = document.createElement('canvas');
-      pc.width = 8; pc.height = 8;
-      var pctx = pc.getContext('2d');
-      pctx.fillStyle = color;
-      pctx.fillRect(0, 0, 8, 8);
-      draw(pctx);
-      return ctx.createPattern(pc, 'repeat');
-    }
-
-    var catPatterns = {
-      technical: makePattern(catColors.technical, function () {}),  // solid
-      workshop: makePattern(catColors.workshop, function (p) {      // diagonal lines
-        p.strokeStyle = 'rgba(255,255,255,0.25)';
-        p.lineWidth = 1;
-        p.beginPath(); p.moveTo(0, 8); p.lineTo(8, 0); p.stroke();
-      }),
-      job: makePattern(catColors.job, function (p) {                // dots
-        p.fillStyle = 'rgba(255,255,255,0.3)';
-        p.beginPath(); p.arc(4, 4, 1.5, 0, Math.PI * 2); p.fill();
-      }),
-      announcement: makePattern(catColors.announcement, function (p) {  // horizontal lines
-        p.strokeStyle = 'rgba(255,255,255,0.25)';
-        p.lineWidth = 1;
-        p.beginPath(); p.moveTo(0, 4); p.lineTo(8, 4); p.stroke();
-      }),
-      admin: makePattern(catColors.admin, function (p) {            // crosshatch
-        p.strokeStyle = 'rgba(0,0,0,0.15)';
-        p.lineWidth = 1;
-        p.beginPath(); p.moveTo(0, 8); p.lineTo(8, 0); p.stroke();
-        p.beginPath(); p.moveTo(0, 0); p.lineTo(8, 8); p.stroke();
-      }),
-    };
-
-    // Draw stacked bars
-    data.forEach(function (d, i) {
-      var x = i * (barW + gap);
-      var baseY = chartTop + chartH;
-      catOrder.forEach(function (cat) {
-        var segH = (d[cat] / maxCount) * chartH;
-        if (segH < 0.5) return;
-        baseY -= segH;
-        ctx.fillStyle = catPatterns[cat];
-        ctx.fillRect(x, baseY, barW, segH);
-      });
-      if (d.year % 5 === 0) {
-        ctx.fillStyle = mutedColor;
-        ctx.font = '10px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(d.year, x + barW / 2, h - 2);
-      }
+  // Load more button
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener('click', function () {
+      visibleLimit += 30;
+      scheduleViewSync(currentState, currentFilteredMessages);
     });
   }
 
-  drawChart();
-
-  // Redraw on theme change
-  new MutationObserver(function () { drawChart(); }).observe(
-    document.documentElement,
-    { attributes: true, attributeFilter: ['data-theme'] }
-  );
-
-  // Redraw on resize (debounced)
-  var resizeTimer;
-  window.addEventListener('resize', function () {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(drawChart, 150);
-  });
+  render();
 })();
 
-// Load more
-(function () {
-  var btn = document.getElementById('load-more');
-  if (!btn) return;
-  var hint = document.getElementById('browse-hint');
-  var batch = 30;
-  btn.addEventListener('click', function () {
-    var hidden = document.querySelectorAll('.msg-table .msg-hidden');
-    var shown = 0;
-    for (var i = 0; i < hidden.length && shown < batch; i++) {
-      hidden[i].classList.remove('msg-hidden');
-      shown++;
-    }
-    if (document.querySelectorAll('.msg-table .msg-hidden').length === 0) {
-      btn.style.display = 'none';
-      if (hint) hint.style.display = 'block';
-    }
-  });
-})();
 </script>
 
 <script type="module">

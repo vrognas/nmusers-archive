@@ -46,6 +46,11 @@ CDX_QUERIES = {
         "filter": re.compile(r"/nmusers/\d{4}-\w+/\d+\.html$"),
         "output_dir": "data/raw_cognigen_pipermail",
     },
+    "phor": {
+        "url": "www.phor.com/nonmem/nm/*",
+        "filter": re.compile(r"/nonmem/nm/\d{2}\w{3}\d+\.html$"),
+        "output_dir": "data/raw_phor",
+    },
 }
 
 
@@ -83,7 +88,7 @@ def discover_urls(source: str) -> list[dict]:
 
 def url_to_filename(url: str, source: str) -> str:
     """Convert a URL to a safe local filename."""
-    if source == "old":
+    if source in ("old", "phor"):
         # cognigencorp.com/nonmem/nm/99apr242002.html → 99apr242002.html
         match = re.search(r"(\d{2}\w{3}\d+\.html)$", url)
         return match.group(1) if match else url.split("/")[-1]
@@ -211,7 +216,7 @@ def cmd_discover(args):
     manifest_dir = Path("data/manifests")
     manifest_dir.mkdir(parents=True, exist_ok=True)
 
-    sources = ["old", "pipermail"] if args.source == "all" else [args.source]
+    sources = ["old", "pipermail", "phor"] if args.source == "all" else [args.source]
 
     for source in sources:
         entries = discover_urls(source)
@@ -222,7 +227,7 @@ def cmd_discover(args):
 
 def cmd_download(args):
     """Download pages from saved manifests."""
-    sources = ["old", "pipermail"] if args.source == "all" else [args.source]
+    sources = ["old", "pipermail", "phor"] if args.source == "all" else [args.source]
 
     for source in sources:
         asyncio.run(download_all(source, args.workers))
@@ -237,7 +242,7 @@ def main():
         "discover", help="Query CDX API and save URL manifests"
     )
     discover_parser.add_argument(
-        "--source", choices=["old", "pipermail", "all"], default="all",
+        "--source", choices=["old", "pipermail", "phor", "all"], default="all",
     )
 
     # download subcommand
@@ -245,7 +250,7 @@ def main():
         "download", help="Download pages from saved manifests"
     )
     download_parser.add_argument(
-        "--source", choices=["old", "pipermail", "all"], default="all",
+        "--source", choices=["old", "pipermail", "phor", "all"], default="all",
     )
     download_parser.add_argument(
         "--workers", type=int, default=2, help="Max concurrent requests",

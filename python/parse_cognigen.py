@@ -258,7 +258,7 @@ def parse_old_format_page(filepath: Path) -> list[dict]:
     messages = []
 
     # Split on separator patterns (horizontal rules between messages)
-    message_blocks = re.split(r"_{10,}|={10,}|\*{5,}", body_text)
+    message_blocks = re.split(r"_{10,}|={10,}|\*{4,}", body_text)
 
     if len(message_blocks) <= 1:
         # Single message page
@@ -552,17 +552,18 @@ def main():
     parser = argparse.ArgumentParser(description="Parse Cognigen archives")
     parser.add_argument(
         "--source",
-        choices=["old", "pipermail", "all"],
+        choices=["old", "pipermail", "phor", "all"],
         default="all",
     )
     args = parser.parse_args()
 
-    sources = ["old", "pipermail"] if args.source == "all" else [args.source]
+    sources = ["old", "pipermail", "phor"] if args.source == "all" else [args.source]
 
     for source in sources:
         config = {
             "old": ("data/raw_cognigencorp", "data/cognigencorp_messages.parquet"),
             "pipermail": ("data/raw_cognigen_pipermail", "data/cognigen_pipermail_messages.parquet"),
+            "phor": ("data/raw_phor", "data/phor_messages.parquet"),
         }
         input_dir, output_path = config[source]
         input_path = Path(input_dir)
@@ -572,7 +573,7 @@ def main():
             log.warning(f"{input_path} not found — run wayback_recover.py first")
             continue
 
-        if source == "old":
+        if source in ("old", "phor"):
             df = parse_all_old(input_path)
         else:
             df = parse_all_pipermail(input_path)
