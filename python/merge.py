@@ -34,7 +34,7 @@ SOURCE_FILES = {
     "phor": DATA_DIR / "phor_messages.parquet",
 }
 
-SHARED_COLUMNS = ["date", "from_name", "subject", "category", "body_clean", "source", "source_url"]
+SHARED_COLUMNS = ["date", "from_name", "subject", "category", "body_clean", "source", "source_url", "thread_id", "message_number", "in_reply_to_number"]
 
 
 def clean_from_name(s: str) -> str:
@@ -86,7 +86,10 @@ def load_source(name: str, path: Path) -> pl.DataFrame | None:
 
     for col in SHARED_COLUMNS:
         if col not in df.columns:
-            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
+            if col in ("thread_id", "message_number", "in_reply_to_number"):
+                df = df.with_columns(pl.lit(None).cast(pl.Int64).alias(col))
+            else:
+                df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
 
     # Strip ANSI escape sequences from author names
     df = df.with_columns(

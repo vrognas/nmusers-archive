@@ -331,8 +331,7 @@ main {
   font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 0.85rem;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  white-space: pre;
   overflow-x: auto;
 }
 

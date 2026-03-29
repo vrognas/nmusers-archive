@@ -34,7 +34,7 @@
       <tr{% if t.is_current %} class="thread-current"{% endif %}>
         <td class="date-col">{{ t.date_short }}</td>
         <td class="author-col">{{ t.from_name }}</td>
-        <td class="subject-col">
+        <td class="subject-col"{% if t.depth %} style="padding-left: {{ t.depth * 1.5 }}rem"{% endif %}>
           {% if t.is_current %}{{ t.subject }}{% else %}<a href="{{ t.url }}">{{ t.subject }}</a>{% endif %}
         </td>
       </tr>

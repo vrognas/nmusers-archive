@@ -243,7 +243,8 @@ _CATEGORY_PATTERNS = {
         r"modelers?\b.*(?:for|at|in)|laboratory|studentship|"
         r"expert\b.*(?:in|at|for)|(?:pharmacomet|PK.?PD|MIDD).*(?:in\s+\w+,|germany|usa|uk|france)|"
         r"call for applications|PhD program|lecturer\b|collaborator\w*\s+sought|sought\b|"
-        r"call for.*members?\b|(?:pharmaco|PK.?PD|clinical|remote|senior)\w*\s+role|role\b.*(?:pharmaco|PK|clinical|remote|senior)",
+        r"call for.*members?\b|calling all\b|(?:pharmaco|PK.?PD|clinical|remote|senior)\w*\s+role|role\b.*(?:pharmaco|PK|clinical|remote|senior)|"
+        r"leverage your skills",
         re.IGNORECASE,
     ),
     "news": re.compile(
@@ -329,8 +330,20 @@ def load_data() -> pl.DataFrame:
         .alias("author_slug"),
         pl.col("subject")
         .map_elements(normalize_subject, return_dtype=pl.Utf8)
-        .alias("thread_key"),
+        .alias("_subject_key"),
     )
+
+    # Use mail-archive thread_id when available, otherwise subject-based key
+    if "thread_id" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("thread_id").is_not_null())
+            .then(pl.lit("ma:") + pl.col("thread_id").cast(pl.Utf8))
+            .otherwise(pl.col("_subject_key"))
+            .alias("thread_key"),
+        )
+    else:
+        df = df.with_columns(pl.col("_subject_key").alias("thread_key"))
+    df = df.drop("_subject_key")
 
     # Sort by date for consistent ordering
     df = df.sort("date")
@@ -342,7 +355,8 @@ def load_data() -> pl.DataFrame:
     dates = df["date"].to_list()
     new_keys = []
     for i, (tk, dt) in enumerate(zip(thread_keys, dates)):
-        if dt is None:
+        if dt is None or tk.startswith("ma:"):
+            # Skip time-splitting for mail-archive threads (already properly threaded)
             new_keys.append(tk)
             continue
         if tk not in thread_epoch:
@@ -595,6 +609,27 @@ def build_site(output_dir: Path):
                 thread_groups[tk] = []
             thread_groups[tk].append(r)
 
+    # Build message_number → row lookup for computing reply depth
+    msg_by_number: dict[int, dict] = {}
+    for r in rows:
+        mn = r.get("message_number")
+        if mn is not None:
+            msg_by_number[mn] = r
+
+    def compute_depth(msg: dict) -> int:
+        """Follow in_reply_to chain to compute nesting depth."""
+        depth = 0
+        current = msg.get("in_reply_to_number")
+        seen = set()
+        while current is not None and current not in seen:
+            seen.add(current)
+            depth += 1
+            parent = msg_by_number.get(current)
+            if parent is None:
+                break
+            current = parent.get("in_reply_to_number")
+        return depth
+
     # Build prev/next index (messages sorted by date)
     dated_rows = [r for r in rows if r["date"] is not None]
     msg_template = env.get_template("message.html")
@@ -602,7 +637,7 @@ def build_site(output_dir: Path):
         if row["year"] is None or row["month"] is None:
             continue
 
-        # Thread context
+        # Thread context with nesting depth
         tk = row["thread_key"]
         thread_msgs = thread_groups.get(tk, [])
         thread_context = None
@@ -613,6 +648,7 @@ def build_site(output_dir: Path):
                     "from_name": t["from_name"],
                     "subject": t["subject"],
                     "url": t["url"],
+                    "depth": compute_depth(t),
                     "is_current": t["msg_seq"] == row["msg_seq"]
                     and t["year"] == row["year"]
                     and t["month"] == row["month"],

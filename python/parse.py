@@ -98,28 +98,57 @@ def _extract_thread_parent(soup: BeautifulSoup) -> int | None:
     The tSliceList contains a nested <ul>/<li> tree showing the thread.
     The current message is <li class="tSliceCur">. Its parent <li>
     (one nesting level up) contains the message this one replies to.
+
+    Structure example:
+        <li class="icons-email">          ← parent message
+          <span class="subject"><a href="msg08350.html">...</a></span>
+          <li><ul>
+            <li class="tSliceCur">        ← current message (no <a>)
+            ...
+          </ul></li>
+        </li>
     """
     current = soup.select_one("li.tSliceCur")
     if current is None:
         return None
 
-    # Walk up: current <li> → parent <ul> → parent <li>
-    parent_ul = current.parent
-    if parent_ul is None or parent_ul.name != "ul":
-        return None
+    # Walk up: tSliceCur <li> → parent <ul> → wrapper <li> → parent <ul> → parent <li>
+    # The nesting is: parent <li> > <ul> > wrapper <li> > <ul> > tSliceCur <li>
+    # But the wrapper <li> may not have a link (it just groups children).
+    # We need to find the nearest ancestor <li> that has a span.subject > a.
+    # Walk up from tSliceCur to find the parent message.
+    # The thread tree nests replies inside wrapper <li> elements.
+    # The parent message is either:
+    #   a) an ancestor <li> with a direct span.subject > a, or
+    #   b) the previous sibling <li> of a wrapper ancestor
+    node = current
+    while node:
+        parent_ul = node.parent
+        if parent_ul is None or parent_ul.name != "ul":
+            break
+        parent_li = parent_ul.parent
+        if parent_li is None or parent_li.name != "li":
+            break
+        # Check if this <li> directly contains a subject link
+        span = parent_li.find("span", class_="subject", recursive=False)
+        link = span.find("a") if span else None
+        if link:
+            href = link.get("href", "")
+            match = re.search(r"msg(\d+)", href)
+            return int(match.group(1)) if match else None
+        # No link — check the previous sibling <li> (parent message is often a sibling)
+        prev = parent_li.find_previous_sibling("li")
+        if prev:
+            span = prev.find("span", class_="subject", recursive=False)
+            link = span.find("a") if span else None
+            if link:
+                href = link.get("href", "")
+                match = re.search(r"msg(\d+)", href)
+                return int(match.group(1)) if match else None
+        # Keep walking up
+        node = parent_li
 
-    parent_li = parent_ul.parent
-    if parent_li is None or parent_li.name != "li":
-        # Current is at top level → thread root
-        return None
-
-    parent_link = parent_li.select_one(":scope > span.subject a")
-    if parent_link is None:
-        return None
-
-    href = parent_link.get("href", "")
-    match = re.search(r"msg(\d+)", href)
-    return int(match.group(1)) if match else None
+    return None
 
 
 def parse_message(filepath: Path) -> dict | None:
