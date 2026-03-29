@@ -549,6 +549,7 @@ main {
 /* Home search */
 .home-search {
   display: flex;
+  flex-direction: column;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
   position: sticky;
@@ -673,7 +674,7 @@ main {
 .thread-current { background: var(--bg-hover); }
 
 /* Home search results */
-.search-results-wrap { display: none; margin-bottom: 2rem; }
+.search-results-wrap { display: none; margin-top: 0.5rem; margin-bottom: 0.75rem; }
 .search-results-wrap.active { display: block; }
 
 /* Keyboard shortcut help overlay */

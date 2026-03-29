@@ -5,17 +5,12 @@
 {% endblock %}
 
 {% block content %}
-<h1>NMusers Mailing List Archive</h1>
+<h1>Explore Messages</h1>
 <p class="page-desc">
-  Searchable archive of {{ total_messages | commafy }} messages from the NONMEM users mailing list, spanning {{ year_min }}&ndash;{{ year_max }}.
+  Search full message text, filter by category or year, and browse by thread.
 </p>
 
 <noscript><p class="page-desc">JavaScript is required for search, filtering, and the chart. Browse messages by <a href="/{{ year_max }}/">year</a> or <a href="/authors/">author</a>.</p></noscript>
-
-<div id="search-results" class="search-results-wrap">
-  <div id="search-status" class="search-status"></div>
-  <div id="search-hits"></div>
-</div>
 
 <div id="home-content">
 <dl class="stats-bar">
@@ -55,7 +50,11 @@
 <h2>Messages</h2>
 <div class="home-search">
   <label for="search-input" class="sr-only">Search messages</label>
-  <input type="text" id="search-input" placeholder="Search {{ total_messages | commafy }} messages..." class="home-search-input" autocomplete="off">
+  <input type="text" id="search-input" placeholder="Search author, subject, or message text..." class="home-search-input" autocomplete="off">
+  <div id="search-results" class="search-results-wrap">
+    <div id="search-status" class="search-status"></div>
+    <div id="search-hits"></div>
+  </div>
 </div>
 
 <div class="messages-layout">
@@ -113,12 +112,6 @@
     {% endfor %}
   </tbody>
 </table>
-<div class="load-more-wrap" style="display: none;">
-  <button id="load-more" class="sort-btn load-more-btn">Load more</button>
-  <p id="browse-hint" class="search-status browse-hint">
-    Browse all messages by <a href="/{{ year_max }}/">year</a> or use <a href="/search/">search</a>.
-  </p>
-</div>
 </div>
 <table class="msg-table" id="thread-view" style="display: none;" aria-label="Messages grouped by thread">
   <thead>
@@ -131,13 +124,18 @@
   </thead>
   <tbody></tbody>
 </table>
+<div class="load-more-wrap" style="display: none;">
+  <button id="load-more" class="sort-btn load-more-btn">Load more</button>
+  <p id="browse-hint" class="search-status browse-hint">
+    Browse all messages by <a href="/{{ year_max }}/">year</a> or use <a href="/search/">search</a>.
+  </p>
+</div>
 </div>
 </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script id="home-messages-data" type="application/json">{{ home_messages_json }}</script>
 <script>
 (function () {
   var catBtns = document.querySelectorAll(".cat-toggle");
@@ -152,10 +150,21 @@
   var loadMoreWrap = document.querySelector('.load-more-wrap');
   var loadMoreBtn = document.getElementById('load-more');
   var browseHint = document.getElementById('browse-hint');
-  var messagesEl = document.getElementById('home-messages-data');
-  var messages = messagesEl ? JSON.parse(messagesEl.textContent) : [];
-
-  if (messagesEl) messagesEl.remove();
+  var searchInput = document.getElementById('search-input');
+  var searchResultsWrap = document.getElementById('search-results');
+  var searchStatusEl = document.getElementById('search-status');
+  var searchHitsEl = document.getElementById('search-hits');
+  var messages = null;
+  var messagesPromise = null;
+  var messagesLoadFailed = false;
+  var homeMessagesUrl = '/home-messages.json';
+  var searchQuery = '';
+  var searchAppliedQuery = '';
+  var searchMatchUrls = null;
+  var searchLoading = false;
+  var searchError = '';
+  var searchElapsedMs = '';
+  var searchRawCount = 0;
 
   function messageAuthorUrl(msg) {
     return "/authors/" + msg.author_slug + "/";
@@ -213,6 +222,11 @@
     return cats;
   }
 
+  function allCategoriesActive() {
+    var cats = getActiveCats();
+    return cats.length === catBtns.length;
+  }
+
   function getActiveYears() {
     var years = [];
     yearBtns.forEach(function (b) { if (b.classList.contains("active")) years.push(b.dataset.year); });
@@ -234,28 +248,62 @@
     var activeCats = getActiveCats();
     var activeYears = getActiveYears();
     var allYears = activeYears.length === yearBtns.length;
+    var query = searchInput ? searchInput.value.trim() : searchQuery;
     return {
       activeCats: activeCats,
       activeYears: activeYears,
       allYears: allYears,
-      filtering: !allYears || activeCats.length < catBtns.length,
+      searchQuery: query,
+      filtering: !allYears || activeCats.length < catBtns.length || !!query,
       noCats: activeCats.length === 0,
       noYears: activeYears.length === 0,
     };
   }
 
+  function loadMessages() {
+    if (messages) return Promise.resolve(messages);
+    if (messagesLoadFailed) return Promise.reject(new Error('home messages unavailable'));
+    if (messagesPromise) return messagesPromise;
+
+    messagesPromise = fetch(homeMessagesUrl)
+      .then(function (response) {
+        if (!response.ok) throw new Error('Failed to load home messages: ' + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        messages = data;
+        return data;
+      })
+      .catch(function (error) {
+        messagesLoadFailed = true;
+        console.error(error);
+        throw error;
+      })
+      .finally(function () {
+        messagesPromise = null;
+      });
+
+    return messagesPromise;
+  }
+
   function filterMessages(state) {
+    var hasAppliedSearch = !!state.searchQuery
+      && searchAppliedQuery === state.searchQuery
+      && !!searchMatchUrls
+      && typeof searchMatchUrls.has === 'function';
+
     return messages.filter(function (msg) {
       var catMatch = state.activeCats.indexOf(msg.category) !== -1;
       var yearMatch = state.allYears || state.activeYears.indexOf(String(msg.year)) !== -1;
-      return catMatch && yearMatch;
+      var searchMatch = !state.searchQuery || !hasAppliedSearch || searchMatchUrls.has(msg.url);
+      return catMatch && yearMatch && searchMatch;
     });
   }
 
-  function buildThreadRows(filteredMessages) {
+  function buildThreadGroups(filteredMessages) {
     var threads = {};
     var threadOrder = [];
-    var rows = [];
+    var groups = [];
 
     filteredMessages.forEach(function (msg) {
       var threadKey = msg.thread_key || msg.subject;
@@ -268,38 +316,79 @@
 
     threadOrder.forEach(function (threadKey) {
       var threadMessages = threads[threadKey].slice().reverse();
+      var rows = [];
       threadMessages.forEach(function (msg, index) {
         rows.push({ msg: msg, isReply: index > 0 && threadMessages.length > 1 });
       });
+      groups.push({ rows: rows, size: rows.length });
     });
 
-    return rows;
+    return groups;
   }
 
   function renderDateRows(filteredMessages) {
-    renderRows(dateTbody, filteredMessages.slice(0, visibleLimit).map(function (msg) {
+    var shownRows = filteredMessages.slice(0, visibleLimit).map(function (msg) {
       return { msg: msg, isReply: false };
-    }));
-    return filteredMessages.length;
+    });
+    renderRows(dateTbody, shownRows);
+    return { totalCount: filteredMessages.length, shownCount: shownRows.length };
   }
 
   function renderThreadRows(filteredMessages) {
-    var threadRows = buildThreadRows(filteredMessages);
-    renderRows(threadTbody, threadRows.slice(0, visibleLimit));
-    return threadRows.length;
+    var threadGroups = buildThreadGroups(filteredMessages);
+    var shownRows = [];
+    var shownCount = 0;
+    var totalCount = 0;
+
+    threadGroups.forEach(function (group) {
+      totalCount += group.size;
+      if (shownCount >= visibleLimit && shownRows.length > 0) return;
+      shownRows = shownRows.concat(group.rows);
+      shownCount += group.size;
+    });
+
+    renderRows(threadTbody, shownRows);
+    return { totalCount: totalCount, shownCount: shownRows.length };
   }
 
-  function updateLoadMore(totalCount, state) {
+  function updateLoadMore(totalCount, shownCount, state) {
     if (!loadMoreWrap || !loadMoreBtn) return;
 
-    var shown = Math.min(visibleLimit, totalCount);
-    var hasMore = shown < totalCount;
+    var hasMore = shownCount < totalCount;
     var showBrowseHint = !state.filtering && !hasMore && totalCount > 0;
 
-    loadMoreBtn.textContent = hasMore ? "Load more (" + shown + " / " + totalCount + ")" : "Load more";
+    loadMoreBtn.textContent = hasMore ? "Load more (" + shownCount + " / " + totalCount + ")" : "Load more";
     loadMoreBtn.style.display = hasMore ? "" : "none";
     if (browseHint) browseHint.style.display = showBrowseHint ? "" : "none";
     loadMoreWrap.style.display = hasMore || showBrowseHint ? "" : "none";
+  }
+
+  function updateSearchUi(filteredCount) {
+    if (!searchResultsWrap || !searchStatusEl) return;
+    if (searchHitsEl) searchHitsEl.replaceChildren();
+
+    if (!searchQuery) {
+      searchResultsWrap.classList.remove('active');
+      searchStatusEl.textContent = '';
+      return;
+    }
+
+    searchResultsWrap.classList.add('active');
+
+    if (searchError) {
+      searchStatusEl.textContent = searchError;
+      return;
+    }
+
+    if (searchLoading) {
+      searchStatusEl.textContent = 'Searching subject, author, and body…';
+      return;
+    }
+
+    var noun = filteredCount === 1 ? 'message' : 'messages';
+    var rawSuffix = searchRawCount !== filteredCount ? ' (' + searchRawCount + ' raw matches before filters)' : '';
+    var elapsedSuffix = searchElapsedMs ? ' in ' + searchElapsedMs + 'ms' : '';
+    searchStatusEl.textContent = filteredCount + ' ' + noun + ' match the current filters' + rawSuffix + elapsedSuffix + '.';
   }
 
   // --- Interactive D3 chart ---
@@ -460,7 +549,34 @@
     });
   }
 
-  function buildFilteredChartData(state) {
+  function buildFilteredChartData(state, filteredMessages) {
+    if (filteredMessages) {
+      var rowsByYear = {};
+
+      chartData.forEach(function (d) {
+        var row = {
+          year: d.year,
+          count: d.count,
+          filteredCount: 0,
+        };
+        catOrder.forEach(function (cat) {
+          row[cat] = 0;
+        });
+        rowsByYear[d.year] = row;
+      });
+
+      filteredMessages.forEach(function (msg) {
+        var row = rowsByYear[msg.year];
+        if (!row || catOrder.indexOf(msg.category) === -1) return;
+        row[msg.category] += 1;
+        row.filteredCount += 1;
+      });
+
+      return chartData.map(function (d) {
+        return rowsByYear[d.year];
+      });
+    }
+
     return chartData.map(function (d) {
       var yearActive = state.allYears || state.activeYears.indexOf(String(d.year)) !== -1;
       var row = {
@@ -496,13 +612,67 @@
     if (tooltip) tooltip.style('display', 'none');
   }
 
-  function updateChart(state) {
+  function activateAllYears() {
+    yearBtns.forEach(function (btn) {
+      btn.classList.add('active');
+      btn.setAttribute('aria-pressed', 'true');
+    });
+    syncAllBtn();
+  }
+
+  function activateAllCategories() {
+    catBtns.forEach(function (btn) {
+      btn.classList.add('active');
+      btn.setAttribute('aria-pressed', 'true');
+    });
+  }
+
+  function normalizeCategorySelection() {
+    if (getActiveCats().length > 0) return;
+    activateAllCategories();
+  }
+
+  function normalizeYearSelection() {
+    if (getActiveYears().length === 0) {
+      activateAllYears();
+      return;
+    }
+    syncAllBtn();
+  }
+
+  function selectChartYear(year) {
+    var yearStr = String(year);
+    var matched = false;
+    var activeYears = getActiveYears();
+
+    if (activeYears.length === 1 && activeYears[0] === yearStr) {
+      activateAllYears();
+      visibleLimit = getBaseVisibleLimit(getFilterState());
+      render();
+      return;
+    }
+
+    yearBtns.forEach(function (btn) {
+      var on = btn.dataset.year === yearStr;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on);
+      matched = matched || on;
+    });
+
+    if (!matched) return;
+
+    syncAllBtn();
+    visibleLimit = getBaseVisibleLimit(getFilterState());
+    render();
+  }
+
+  function updateChart(state, filteredMessages) {
     if (!chartEl || !svg) return;
 
     hideTooltip();
 
     var filterState = state || getFilterState();
-    var filteredChartData = buildFilteredChartData(filterState);
+    var filteredChartData = buildFilteredChartData(filterState, filteredMessages);
     yScale.domain([0, getChartMax(filteredChartData)]);
 
     var stack = d3.stack()
@@ -537,8 +707,13 @@
       enter.merge(rects)
         .attr('fill', 'url(#pat-' + cat + ')')
         .attr('pointer-events', function (d) { return d.data.filteredCount === 0 ? 'none' : 'auto'; })
+        .style('cursor', function (d) { return d.data.filteredCount === 0 ? 'default' : 'pointer'; })
         .on('mousemove', function (event, d) { showTooltip(event, d.data); })
         .on('mouseleave', hideTooltip)
+        .on('click', function (event, d) {
+          event.preventDefault();
+          selectChartYear(d.data.year);
+        })
         .interrupt('filter')
         .transition('filter').duration(chartTransitionMs).ease(d3.easeCubicOut)
         .attr('y', function (d) { return yScale(d[1]); })
@@ -571,8 +746,8 @@
   var defaultVisibleLimit = 30;
   var filteredVisibleLimit = 500;
   var visibleLimit = defaultVisibleLimit;
-  var currentState = getFilterState();
-  var currentFilteredMessages = filterMessages(currentState);
+  var currentState;
+  var currentFilteredMessages;
 
   // Empty state element (created once)
   var emptyMsg = document.createElement('p');
@@ -585,21 +760,25 @@
   var tablePaintFrame = 0;
   var tableRenderFrame = 0;
 
+  function getBaseVisibleLimit(state) {
+    return state.filtering ? filteredVisibleLimit : defaultVisibleLimit;
+  }
+
   function syncViews(state, filteredMessages) {
     var isThread = document.querySelector(".sort-btn[data-view='thread']").classList.contains("active");
-    var totalCount;
+    var result;
 
     if (isThread) {
       dateView.style.display = "none";
       threadView.style.display = "";
-      totalCount = renderThreadRows(filteredMessages);
+      result = renderThreadRows(filteredMessages);
     } else {
       dateView.style.display = "";
       threadView.style.display = "none";
-      totalCount = renderDateRows(filteredMessages);
+      result = renderDateRows(filteredMessages);
     }
 
-    updateLoadMore(totalCount, state);
+    updateLoadMore(result.totalCount, result.shownCount, state);
   }
 
   function scheduleViewSync(state, filteredMessages) {
@@ -619,14 +798,17 @@
   function saveFilterToHash(state) {
     var parts = [];
     if (!state.allYears) {
-      parts.push('y=' + state.activeYears.join(','));
+      parts.push('y=' + encodeURIComponent(state.activeYears.join(',')));
     }
     if (state.activeCats.length < catBtns.length) {
-      parts.push('c=' + state.activeCats.join(','));
+      parts.push('c=' + encodeURIComponent(state.activeCats.join(',')));
+    }
+    if (state.searchQuery) {
+      parts.push('q=' + encodeURIComponent(state.searchQuery));
     }
     var isThread = document.querySelector(".sort-btn[data-view='thread']").classList.contains("active");
-    if (!isThread) parts.push('v=date');
-    history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname);
+    if (isThread) parts.push('v=thread');
+    history.replaceState(null, '', location.pathname + location.search + (parts.length ? '#' + parts.join('&') : ''));
   }
 
   function restoreFilterFromHash() {
@@ -635,29 +817,35 @@
     var params = {};
     hash.split('&').forEach(function (p) {
       var kv = p.split('=');
-      if (kv.length === 2) params[kv[0]] = kv[1];
+      if (kv.length === 2) params[kv[0]] = decodeURIComponent(kv[1]);
     });
 
-    if (params.y) {
-      var activeYrs = params.y.split(',');
+    if (Object.prototype.hasOwnProperty.call(params, 'y')) {
+      var activeYrs = params.y ? params.y.split(',') : [];
       yearBtns.forEach(function (b) {
         var on = activeYrs.indexOf(b.dataset.year) !== -1;
         b.classList.toggle('active', on);
         b.setAttribute('aria-pressed', on);
       });
-      syncAllBtn();
+      normalizeYearSelection();
     }
-    if (params.c) {
-      var activeCats = params.c.split(',');
+    if (Object.prototype.hasOwnProperty.call(params, 'c')) {
+      var activeCats = params.c ? params.c.split(',') : [];
       catBtns.forEach(function (b) {
         var on = activeCats.indexOf(b.dataset.cat) !== -1;
         b.classList.toggle('active', on);
         b.setAttribute('aria-pressed', on);
       });
+      normalizeCategorySelection();
     }
-    if (params.v === 'date') {
+    if (Object.prototype.hasOwnProperty.call(params, 'q')) {
+      searchQuery = params.q || '';
+      searchLoading = !!searchQuery;
+      if (searchInput) searchInput.value = searchQuery;
+    }
+    if (params.v === 'thread' || params.v === 'date') {
       viewBtns.forEach(function (b) {
-        var on = b.dataset.view === 'date';
+        var on = b.dataset.view === params.v;
         b.classList.toggle('active', on);
         b.setAttribute('aria-pressed', on);
       });
@@ -665,25 +853,97 @@
   }
 
   restoreFilterFromHash();
+  currentState = getFilterState();
+  visibleLimit = getBaseVisibleLimit(currentState);
+
+  window.homeSearchController = {
+    setPending: function (query) {
+      if (searchInput && searchInput.value.trim() !== query) return;
+      searchQuery = query;
+      searchAppliedQuery = '';
+      searchMatchUrls = null;
+      searchLoading = !!query;
+      searchError = '';
+      searchElapsedMs = '';
+      searchRawCount = 0;
+      visibleLimit = getBaseVisibleLimit(getFilterState());
+      render();
+    },
+    setResults: function (query, urls, rawCount, elapsedMs) {
+      if (searchInput && searchInput.value.trim() !== query) return;
+      searchQuery = query;
+      searchAppliedQuery = query;
+      searchMatchUrls = new Set(urls || []);
+      searchLoading = false;
+      searchError = '';
+      searchElapsedMs = elapsedMs || '';
+      searchRawCount = rawCount || 0;
+      visibleLimit = getBaseVisibleLimit(getFilterState());
+      render();
+    },
+    setError: function (query, message) {
+      if (searchInput && searchInput.value.trim() !== query) return;
+      searchQuery = query;
+      searchAppliedQuery = '';
+      searchMatchUrls = null;
+      searchLoading = false;
+      searchError = message;
+      searchElapsedMs = '';
+      searchRawCount = 0;
+      visibleLimit = getBaseVisibleLimit(getFilterState());
+      render();
+    },
+    clear: function () {
+      searchQuery = '';
+      searchAppliedQuery = '';
+      searchMatchUrls = null;
+      searchLoading = false;
+      searchError = '';
+      searchElapsedMs = '';
+      searchRawCount = 0;
+      visibleLimit = getBaseVisibleLimit(getFilterState());
+      render();
+    },
+  };
 
   function render() {
     var state = getFilterState();
-    var filteredMessages = filterMessages(state);
 
     currentState = state;
-    currentFilteredMessages = filteredMessages;
 
     // Persist filter state to URL hash
     saveFilterToHash(state);
 
-    // Update the plot first so filter feedback lands in the same frame as the click.
-    updateChart(state);
+    if (!messages) {
+      // Fall back to the pre-aggregated chart until the client dataset is ready.
+      updateChart(state);
+      if (state.filtering || document.querySelector(".sort-btn[data-view='thread']").classList.contains("active")) {
+        dateView.style.display = "none";
+        threadView.style.display = "none";
+        emptyMsg.textContent = messagesLoadFailed ? 'Message filters are unavailable right now.' : 'Loading messages...';
+        emptyMsg.style.display = '';
+      }
+      if (loadMoreWrap) loadMoreWrap.style.display = 'none';
+      updateSearchUi(0);
+      if (!messagesLoadFailed) {
+        loadMessages().then(function () {
+          render();
+        }).catch(function () {});
+      }
+      return;
+    }
+
+    var filteredMessages = filterMessages(state);
+
+    currentFilteredMessages = filteredMessages;
+
+    // Rebuild chart counts from the same filtered message set used by the tables.
+    updateChart(state, filteredMessages);
 
     // Keep non-layout UI work synchronous.
-    emptyMsg.style.display = filteredMessages.length === 0 ? '' : 'none';
-
-    // Show/hide load-more immediately (cheap, no DOM churn)
-    updateLoadMore(filteredMessages.length, state);
+    emptyMsg.textContent = 'No messages match the selected filters. Try enabling more categories or years.';
+    emptyMsg.style.display = !state.searchQuery && filteredMessages.length === 0 ? '' : 'none';
+    updateSearchUi(filteredMessages.length);
 
     // Let the chart paint, then sync heavier table DOM work on the next frame.
     scheduleViewSync(state, filteredMessages);
@@ -691,22 +951,27 @@
 
   catBtns.forEach(function (btn) {
     btn.addEventListener("click", function () {
-      btn.classList.toggle("active");
-      btn.setAttribute("aria-pressed", btn.classList.contains("active"));
-      visibleLimit = getFilterState().filtering ? filteredVisibleLimit : defaultVisibleLimit;
+      if (allCategoriesActive()) {
+        catBtns.forEach(function (b) {
+          b.classList.remove("active");
+          b.setAttribute("aria-pressed", "false");
+        });
+        btn.classList.add("active");
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        btn.classList.toggle("active");
+        btn.setAttribute("aria-pressed", btn.classList.contains("active"));
+      }
+      normalizeCategorySelection();
+      visibleLimit = getBaseVisibleLimit(getFilterState());
       render();
     });
   });
 
   // "All" button: toggle all years on or off
   allYearBtn.addEventListener("click", function () {
-    var turnOn = !allYearsActive();
-    yearBtns.forEach(function (b) {
-      b.classList.toggle("active", turnOn);
-      b.setAttribute("aria-pressed", turnOn);
-    });
-    syncAllBtn();
-    visibleLimit = getFilterState().filtering ? filteredVisibleLimit : defaultVisibleLimit;
+    activateAllYears();
+    visibleLimit = getBaseVisibleLimit(getFilterState());
     render();
   });
 
@@ -725,8 +990,8 @@
         btn.classList.toggle("active");
         btn.setAttribute("aria-pressed", btn.classList.contains("active"));
       }
-      syncAllBtn();
-      visibleLimit = getFilterState().filtering ? filteredVisibleLimit : defaultVisibleLimit;
+      normalizeYearSelection();
+      visibleLimit = getBaseVisibleLimit(getFilterState());
       render();
     });
   });
@@ -746,139 +1011,131 @@
   // Load more button
   if (loadMoreBtn) {
     loadMoreBtn.addEventListener('click', function () {
-      visibleLimit += currentState.filtering ? filteredVisibleLimit : defaultVisibleLimit;
+      visibleLimit += getBaseVisibleLimit(currentState);
       scheduleViewSync(currentState, currentFilteredMessages);
     });
   }
 
+  loadMessages().then(function () {
+    render();
+  }).catch(function () {
+    render();
+  });
   render();
 })();
 
 </script>
 
 <script type="module">
-import { restore } from 'https://cdn.jsdelivr.net/npm/@orama/plugin-data-persistence@3.1.18/+esm';
-import { search } from 'https://cdn.jsdelivr.net/npm/@orama/orama@3.1.18/+esm';
+let searchDocs = null;
+let loadPromise = null;
+let searchTimer = 0;
+let searchRequestId = 0;
 
-let db = null;
-let snippets = {};
-let loading = false;
-
-async function ensureIndex() {
-  if (db || loading) return;
-  loading = true;
-  try {
-    const [indexResp, snippetsResp] = await Promise.all([
-      fetch('/search-index.json'),
-      fetch('/search-snippets.json'),
-    ]);
-    const data = await indexResp.json();
-    snippets = await snippetsResp.json();
-    db = await restore('json', data);
-  } catch (e) {
-    console.error('Search index load failed:', e);
-    const statusEl = document.getElementById('search-status');
-    if (statusEl) statusEl.textContent = 'Search unavailable. Browse by year or author instead.';
-  } finally {
-    loading = false;
-  }
+function controller() {
+  return window.homeSearchController;
 }
 
-function truncate(text, maxLen) {
-  if (!text || text.length <= maxLen) return text || '';
-  return text.substring(0, maxLen) + '...';
+function normalizeText(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-async function doSearch() {
-  const term = document.getElementById('search-input').value.trim();
-  const resultsEl = document.getElementById('search-results');
-  const hitsEl = document.getElementById('search-hits');
-  const statusEl = document.getElementById('search-status');
-  const homeContent = document.getElementById('home-content');
+async function ensureSearchDocs() {
+  if (searchDocs) return searchDocs;
+  if (loadPromise) return loadPromise;
 
+  loadPromise = fetch('/search-data.json')
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error('Search data load failed: ' + response.status);
+      }
+      const data = await response.json();
+      searchDocs = data.map((doc) => ({
+        url: doc.url,
+        text: normalizeText([doc.from_name, doc.subject, doc.body].join(' ')),
+      }));
+      return searchDocs;
+    })
+    .catch((error) => {
+      console.error('Search data load failed:', error);
+      throw error;
+    })
+    .finally(() => {
+      loadPromise = null;
+    });
+
+  return loadPromise;
+}
+
+async function runSearch(term, requestId) {
   if (!term) {
-    resultsEl.classList.remove('active');
-    homeContent.style.display = '';
     return;
   }
 
-  if (!db) {
-    await ensureIndex();
-    if (!db) {
-      statusEl.textContent = 'Loading search index...';
-      resultsEl.classList.add('active');
-      homeContent.style.display = 'none';
+  try {
+    const docs = await ensureSearchDocs();
+    if (!docs || requestId !== searchRequestId || !controller()) {
       return;
     }
-  }
 
-  const start = performance.now();
-  const results = await search(db, {
-    term,
-    tolerance: Math.min(Math.floor(term.length / 4), 2),
-    boost: { subject: 5, from_name: 3 },
-    limit: 50,
-  });
-  const elapsed = (performance.now() - start).toFixed(1);
+    const normalizedQuery = normalizeText(term);
+    const terms = normalizedQuery.split(' ').filter(Boolean);
+    const urls = [];
+    const start = performance.now();
 
-  statusEl.textContent = results.count + ' results in ' + elapsed + 'ms';
-  resultsEl.classList.add('active');
-  homeContent.style.display = 'none';
+    docs.forEach((doc) => {
+      if (!doc.text) return;
+      const phraseMatch = normalizedQuery && doc.text.indexOf(normalizedQuery) !== -1;
+      const allTermsMatch = terms.every((token) => doc.text.indexOf(token) !== -1);
+      if (phraseMatch || allTermsMatch) {
+        urls.push(doc.url);
+      }
+    });
 
-  hitsEl.replaceChildren();
-
-  if (results.hits.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'search-result-snippet';
-    p.textContent = 'No messages found.';
-    hitsEl.appendChild(p);
-    return;
-  }
-
-  for (const hit of results.hits) {
-    const doc = hit.document;
-    const card = document.createElement('div');
-    card.className = 'card search-result';
-
-    const titleRow = document.createElement('div');
-    titleRow.className = 'search-result-title';
-    const link = document.createElement('a');
-    link.href = doc.url;
-    link.textContent = doc.subject;
-    const badge = document.createElement('span');
-    badge.className = 'badge badge-' + doc.category;
-    badge.textContent = doc.category;
-    titleRow.appendChild(link);
-    titleRow.appendChild(badge);
-
-    const meta = document.createElement('div');
-    meta.className = 'search-result-meta';
-    meta.textContent = doc.from_name + ' \u00B7 ' + doc.date;
-
-    card.appendChild(titleRow);
-    card.appendChild(meta);
-
-    const bodyText = snippets[doc.url] || '';
-    if (bodyText) {
-      const snippet = document.createElement('div');
-      snippet.className = 'search-result-snippet';
-      snippet.textContent = truncate(bodyText, 200);
-      card.appendChild(snippet);
+    if (requestId !== searchRequestId || !controller()) {
+      return;
     }
-    hitsEl.appendChild(card);
+
+    controller().setResults(term, urls, urls.length, (performance.now() - start).toFixed(1));
+  } catch (error) {
+    if (requestId !== searchRequestId || !controller()) {
+      return;
+    }
+    controller().setError(term, 'Search unavailable right now. Category and year filters still work.');
   }
 }
 
-let searchTimer;
 function debouncedSearch() {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(doSearch, 200);
+  const term = searchInput.value.trim();
+  searchRequestId += 1;
+  const requestId = searchRequestId;
+
+  if (!term) {
+    if (controller()) controller().clear();
+    return;
+  }
+
+  if (controller()) controller().setPending(term);
+  searchTimer = setTimeout(() => {
+    runSearch(term, requestId);
+  }, 160);
 }
 
 const searchInput = document.getElementById('search-input');
 
-searchInput.addEventListener('focus', ensureIndex, { once: true });
-searchInput.addEventListener('input', debouncedSearch);
+if (searchInput) {
+  searchInput.addEventListener('focus', () => {
+    ensureSearchDocs().catch(() => {});
+  }, { once: true });
+  searchInput.addEventListener('input', debouncedSearch);
+  if (searchInput.value.trim()) {
+    debouncedSearch();
+  }
+}
 
 document.addEventListener('keydown', (e) => {
   if (e.key === '/' && document.activeElement !== searchInput) {

@@ -23,7 +23,7 @@ console.log(`Loaded ${docs.length} documents`);
 // Build snippets map (url → body snippet) for client-side display
 const snippets = {};
 for (const doc of docs) {
-  snippets[doc.url] = doc.body;
+  snippets[doc.url] = doc.body.slice(0, 500);
 }
 const snippetsPath = `${outputDir}/search-snippets.json`;
 writeFileSync(snippetsPath, JSON.stringify(snippets));

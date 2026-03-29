@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
@@ -491,9 +492,12 @@ def build_site(output_dir: Path):
         years=years_data,
         recent_messages=initial_recent,
         recent_years=recent_years,
-        home_messages_json=Markup(json.dumps(home_messages, separators=(",", ":"))),
     )
     (output_dir / "index.html").write_text(home_html, encoding="utf-8")
+    (output_dir / "home-messages.json").write_text(
+        json.dumps(home_messages, separators=(",", ":"), ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     # --- Search page ---
     log.info("Generating search page...")
@@ -796,7 +800,7 @@ def build_site(output_dir: Path):
             {
                 "subject": r["subject"],
                 "from_name": r["from_name"],
-                "body": r["body_clean"][:500],  # Snippet for search + display
+                "body": r["body_clean"],
                 "category": r["category"],
                 "year": r["year"],
                 "date": r["date"].strftime("%Y-%m-%d"),
@@ -804,9 +808,18 @@ def build_site(output_dir: Path):
             }
         )
     search_data_path = output_dir / "search-data.json"
-    search_data_path.write_text(json.dumps(search_docs), encoding="utf-8")
+    search_data_path.write_text(
+        json.dumps(search_docs, separators=(",", ":"), ensure_ascii=False),
+        encoding="utf-8",
+    )
     size_mb = search_data_path.stat().st_size / 1024**2
     log.info(f"Exported {len(search_docs)} docs to {search_data_path} ({size_mb:.1f} MB)")
+
+    log.info("Building Orama search index...")
+    subprocess.run(
+        ["node", str(SITE_DIR / "build-search.mjs"), "--output", str(output_dir)],
+        check=True,
+    )
 
     # Count output files
     file_count = sum(1 for _ in output_dir.rglob("*.html"))
