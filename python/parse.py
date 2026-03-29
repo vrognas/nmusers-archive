@@ -177,9 +177,12 @@ def parse_message(filepath: Path) -> dict | None:
     date_raw = date_el.get_text(strip=True) if date_el else ""
     date = parse_date(date_raw) if date_raw else None
 
-    # Body: one or more <pre> blocks inside div.msgBody
-    body_parts = [pre.get_text() for pre in soup.select("div.msgBody pre")]
-    body_raw = "\n".join(body_parts)
+    # Body: get full text from div.msgBody (not just <pre> — some messages
+    # use <tt> tags for the reply text, with <pre> only for quoted content)
+    msg_body = soup.select_one("div.msgBody")
+    body_raw = msg_body.get_text(separator="\n") if msg_body else ""
+    # Strip the "X-Body-of-Message" marker that mail-archive injects
+    body_raw = body_raw.replace("X-Body-of-Message", "").strip()
     body_clean = strip_disclaimers(body_raw)
 
     # Message-ID from hidden form field
