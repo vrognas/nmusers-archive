@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import logging
+import quopri
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -199,6 +200,7 @@ def parse_date_flexible(date_string: str) -> datetime | None:
         "%d %B %Y %H:%M",
         "%d %B %Y %I:%M %p",
         "%d %B %Y",
+        "%d %B %y",
         # Mbox timestamp: "May 20 06:01:45 1997"
         "%b %d %H:%M:%S %Y",
         # 2-digit year short month: "16 Oct 99"
@@ -244,7 +246,7 @@ def _extract_old_format_text(soup: BeautifulSoup) -> str:
     # fm2html pages often include literal source newlines around <BR> tags.
     # Trim that wrapper whitespace first so one intended line break does not
     # turn into two when <BR> is converted below.
-    html = re.sub(r"(?is)\s*(<br\s*/?>)\s*", r"\1", html)
+    html = re.sub(r"(?is)[ \t\r\n]*(<br\s*/?>)[ \t\r\n]*", r"\1", html)
     html = re.sub(r"(?i)<br\s*/?>\s*", "\n", html)
     html = re.sub(r"(?is)</p>\s*<p[^>]*>", "\n\n", html)
     html = re.sub(r"(?i)</?p[^>]*>", "", html)
@@ -538,7 +540,40 @@ def _extract_message_from_block(
 
 # --- Pipermail format parser (cognigen.com/nmusers) ---
 
-def _extract_hypermail_body(soup: BeautifulSoup) -> str:
+def _extract_html_fragment_text(fragment) -> str:
+    """Extract text while treating HTML line-break tags explicitly."""
+    html = str(fragment)
+    html = re.sub(r"(?is)[ \t\r\n]*(<br\s*/?>)[ \t\r\n]*", r"\1", html)
+    html = re.sub(r"(?i)<br\s*/?>", "\n", html)
+    html = re.sub(r"(?is)</p>\s*<p[^>]*>", "\n\n", html)
+    html = re.sub(r"(?i)</?p[^>]*>", "", html)
+    working = BeautifulSoup(html, "html.parser")
+    return working.get_text()
+
+
+def _normalize_pipermail_body(text: str, raw_html: str = "") -> str:
+    """Normalize pipermail body text and decode quoted-printable artifacts."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+
+    soft_break_count = len(re.findall(r"=\n", text))
+    hex_escape_count = len(re.findall(r"=[0-9A-F]{2}", text))
+    looks_quoted_printable = (
+        bool(re.search(r"=\s*\n\s*<br\s*/?>", raw_html, flags=re.IGNORECASE))
+        or soft_break_count >= 2
+        or (soft_break_count >= 1 and hex_escape_count >= 1)
+        or hex_escape_count >= 3
+    )
+    if looks_quoted_printable:
+        text = quopri.decodestring(text.encode("utf-8")).decode("utf-8", errors="replace")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    lines = [line.rstrip() for line in text.split("\n")]
+    text = "\n".join("" if not line.strip() else line for line in lines)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _extract_hypermail_body(soup: BeautifulSoup) -> tuple[str, str]:
     """Extract message body from hypermail-generated pages.
 
     Looks for the <div class="mail"> between body="start" and body="end"
@@ -554,15 +589,16 @@ def _extract_hypermail_body(soup: BeautifulSoup) -> str:
         received = mail_div.find("span", id="received")
         if received:
             received.decompose()
-        return mail_div.get_text(separator="\n").strip()
+        raw_html = str(mail_div)
+        return _extract_html_fragment_text(mail_div).strip(), raw_html
 
     # Fallback: <pre> tags
-    pre_parts = [pre.get_text() for pre in soup.find_all("pre")]
+    pre_parts = [_extract_html_fragment_text(pre) for pre in soup.find_all("pre")]
     if pre_parts:
-        return "\n".join(pre_parts)
+        return "\n".join(pre_parts).strip(), "\n".join(str(pre) for pre in soup.find_all("pre"))
 
     # Last resort: full page text
-    return soup.get_text(separator="\n")
+    return _extract_html_fragment_text(soup).strip(), str(soup)
 
 
 def parse_pipermail_page(filepath: Path) -> dict | None:
@@ -623,7 +659,8 @@ def parse_pipermail_page(filepath: Path) -> dict | None:
             date = parse_date_flexible(date_raw)
 
     # --- Body ---
-    body_raw = _extract_hypermail_body(soup)
+    body_raw, body_html = _extract_hypermail_body(soup)
+    body_raw = _normalize_pipermail_body(body_raw, body_html)
     body_clean = strip_disclaimers(body_raw)
 
     # 2006-December_0015.html → month + id
@@ -644,6 +681,185 @@ def parse_pipermail_page(filepath: Path) -> dict | None:
         "body_raw": body_raw,
         "body_clean": body_clean,
     }
+
+
+_PHOR_NMO_MESSAGE_PREFIXES = (
+    "Question started by",
+    "Topic started by",
+    "Topic originated by",
+    "Reply by",
+    "Response from",
+    "Response by",
+    "Memo from",
+    "Provided by",
+)
+
+_PHOR_NMO_DATE_OVERRIDES = {
+    ("topic001.html", "question started by"): "21 Nov 1993",
+    ("topic012.html", "topic started by"): "15 Mar 1994",
+    ("topic012.html", "response from"): "15 Mar 1994",
+}
+
+_PHOR_NMO_TOPIC_DATE_OVERRIDES = {
+    "topic002.html": "6 Apr 1994",
+}
+
+_PHOR_NMO_TOPIC_SEQUENCE_DATE_OVERRIDES = {
+    # topic007 has a dated opener followed by ordered undated replies.
+    # Keep the source order and impute increasing dates so the thread
+    # renders chronologically instead of spilling into /undated/.
+    "topic007.html": [
+        "17 Feb 1994",
+        "18 Feb 1994",
+        "19 Feb 1994",
+        "20 Feb 1994",
+        "21 Feb 1994",
+        "22 Feb 1994",
+    ],
+}
+
+
+def _extract_phor_nmo_text(soup: BeautifulSoup) -> str:
+    """Extract normalized text from pre-1995 phor topic pages."""
+    root = soup.body if soup.body else soup
+    for br in root.find_all("br"):
+        br.replace_with("\n")
+    text = root.get_text("\n")
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def _looks_like_phor_nmo_heading(line: str) -> bool:
+    normalized = " ".join(line.strip().split())
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    return lowered.startswith(tuple(prefix.lower() for prefix in _PHOR_NMO_MESSAGE_PREFIXES)) or lowered.startswith("end of topic")
+
+
+def _split_phor_nmo_author_and_date(text: str) -> tuple[str, str]:
+    """Split heading payload into author and optional date."""
+    cleaned = " ".join(text.strip().split())
+    if not cleaned:
+        return "", ""
+
+    if " - " in cleaned:
+        author, maybe_date = cleaned.rsplit(" - ", 1)
+        if parse_date_flexible(maybe_date):
+            return author.strip(), maybe_date.strip()
+
+    parts = cleaned.split()
+    for width in range(min(5, len(parts)), 2, -1):
+        candidate = " ".join(parts[-width:])
+        if parse_date_flexible(candidate):
+            author = " ".join(parts[:-width]).strip(" -")
+            return author, candidate
+
+    return cleaned, ""
+
+
+def _clean_phor_nmo_author(text: str) -> str:
+    raw = (text or "").strip()
+    cleaned = re.sub(r"\b\S+@\S+\b", "", raw)
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:")
+    if cleaned.startswith("(") and cleaned.endswith(")"):
+        cleaned = cleaned[1:-1].strip()
+    if cleaned:
+        return cleaned
+    email_match = re.search(r"\b\S+@\S+\b", raw)
+    return email_match.group(0) if email_match else "Unknown"
+
+
+def parse_phor_nmo_page(filepath: Path) -> list[dict]:
+    """Parse a pre-1995 phor topic page into per-message records."""
+    try:
+        html = read_html(filepath)
+    except OSError:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    subject_el = soup.find("h1")
+    subject = subject_el.get_text(" ", strip=True) if subject_el else filepath.stem
+    body_text = _extract_phor_nmo_text(soup)
+    lines = body_text.split("\n")
+
+    sections: list[tuple[str, list[str]]] = []
+    current_heading: str | None = None
+    current_body: list[str] = []
+
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx].rstrip()
+        stripped = line.strip()
+        normalized = " ".join(stripped.split())
+
+        if _looks_like_phor_nmo_heading(normalized):
+            if idx + 1 < len(lines):
+                next_normalized = " ".join(lines[idx + 1].strip().split())
+                if next_normalized.startswith("- "):
+                    normalized = f"{normalized} {next_normalized}"
+                    idx += 1
+
+            if normalized.lower().startswith("end of topic"):
+                break
+
+            if current_heading is not None:
+                sections.append((current_heading, current_body))
+            current_heading = normalized
+            current_body = []
+            idx += 1
+            continue
+
+        if current_heading is not None:
+            current_body.append(line)
+        idx += 1
+
+    if current_heading is not None:
+        sections.append((current_heading, current_body))
+
+    records = []
+    heading_re = re.compile(
+        r"^(?P<prefix>" + "|".join(re.escape(prefix) for prefix in _PHOR_NMO_MESSAGE_PREFIXES) + r")\s*:?\s*(?P<rest>.+)$",
+        re.IGNORECASE,
+    )
+
+    sequence_overrides = _PHOR_NMO_TOPIC_SEQUENCE_DATE_OVERRIDES.get(filepath.name, [])
+
+    for section_idx, (heading, raw_body_lines) in enumerate(sections):
+        match = heading_re.match(heading)
+        if not match:
+            continue
+
+        prefix = match.group("prefix").strip().lower()
+        author_raw, date_raw = _split_phor_nmo_author_and_date(match.group("rest"))
+        if not date_raw:
+            if section_idx < len(sequence_overrides):
+                date_raw = sequence_overrides[section_idx]
+        if not date_raw:
+            date_raw = _PHOR_NMO_TOPIC_DATE_OVERRIDES.get(filepath.name, "")
+        if not date_raw:
+            date_raw = _PHOR_NMO_DATE_OVERRIDES.get((filepath.name, prefix), "")
+        body_raw = "\n".join(raw_body_lines).strip()
+        if not body_raw:
+            continue
+
+        records.append(
+            {
+                "source": "phor",
+                "source_file": filepath.name,
+                "source_url": f"https://web.archive.org/web/*/http://www.phor.com/nonmem/nmo/{filepath.name}",
+                "date": parse_date_flexible(date_raw) if date_raw else None,
+                "date_raw": date_raw,
+                "from_name": _clean_phor_nmo_author(author_raw),
+                "subject": subject,
+                "category": classify_subject(subject),
+                "body_raw": body_raw,
+                "body_clean": strip_disclaimers(body_raw),
+            }
+        )
+
+    return records
 
 
 def parse_all_old(input_dir: Path) -> pl.DataFrame:
@@ -679,6 +895,27 @@ def parse_all_pipermail(input_dir: Path) -> pl.DataFrame:
     return pl.DataFrame(records)
 
 
+def parse_all_phor(input_dir: Path, nmo_input_dir: Path) -> pl.DataFrame:
+    frames = []
+
+    if input_dir.exists() and any(input_dir.glob("*.html")):
+        frames.append(parse_all_old(input_dir))
+
+    nmo_files = sorted(nmo_input_dir.glob("*.html")) if nmo_input_dir.exists() else []
+    if nmo_files:
+        log.info(f"Parsing {len(nmo_files)} phor pre-1995 topic pages...")
+        nmo_messages = []
+        for filepath in nmo_files:
+            nmo_messages.extend(parse_phor_nmo_page(filepath))
+        log.info(f"Extracted {len(nmo_messages)} messages from {len(nmo_files)} phor topic pages")
+        frames.append(pl.DataFrame(nmo_messages))
+
+    if not frames:
+        raise FileNotFoundError(f"No HTML files in {input_dir} or {nmo_input_dir}")
+
+    return pl.concat(frames, how="diagonal_relaxed")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Parse Cognigen archives")
     parser.add_argument(
@@ -699,13 +936,16 @@ def main():
         input_dir, output_path = config[source]
         input_path = Path(input_dir)
         out = Path(output_path)
+        phor_nmo_path = Path("data/raw_phor_nmo")
 
         if not input_path.exists():
             log.warning(f"{input_path} not found — run wayback_recover.py first")
             continue
 
-        if source in ("old", "phor"):
+        if source == "old":
             df = parse_all_old(input_path)
+        elif source == "phor":
+            df = parse_all_phor(input_path, phor_nmo_path)
         else:
             df = parse_all_pipermail(input_path)
 

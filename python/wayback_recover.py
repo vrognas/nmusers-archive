@@ -20,6 +20,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+from urllib.parse import urljoin
 
 import httpx
 
@@ -37,30 +38,54 @@ log = logging.getLogger("wayback")
 # CDX queries for each source
 CDX_QUERIES = {
     "old": {
-        "url": "cognigencorp.com/nonmem/nm/*",
+        "urls": ["cognigencorp.com/nonmem/nm/*"],
         "filter": re.compile(r"/nonmem/nm/\d{2}\w{3}\d+\.html$"),
         "output_dir": "data/raw_cognigencorp",
     },
     "pipermail": {
-        "url": "cognigen.com/nmusers/*",
+        "urls": ["cognigen.com/nmusers/*"],
         "filter": re.compile(r"/nmusers/\d{4}-\w+/\d+\.html$"),
         "output_dir": "data/raw_cognigen_pipermail",
     },
     "phor": {
-        "url": "www.phor.com/nonmem/nm/*",
+        "urls": [
+            "www.phor.com/nonmem/nm/*",
+            "phor.com/nonmem/nm/*",
+        ],
         "filter": re.compile(r"/nonmem/nm/\d{2}\w{3}\d+\.html$"),
         "output_dir": "data/raw_phor",
+        "index_pages": [
+            {
+                "wayback_url": "https://web.archive.org/web/20071015145237/http://phor.com/nonmem/nm/archpage.html",
+                "base_url": "http://www.phor.com/nonmem/nm/",
+                "link_pattern": re.compile(r'href="([0-9]{2}[a-z]{3}\d{1,2}\d{4}\.html)"', re.IGNORECASE),
+            },
+        ],
+    },
+    "phor_nmo": {
+        "urls": [
+            "www.phor.com/nonmem/nmo/*",
+            "phor.com/nonmem/nmo/*",
+        ],
+        "filter": re.compile(r"/nonmem/nmo/topic\d{3}\.html$", re.IGNORECASE),
+        "output_dir": "data/raw_phor_nmo",
+        "index_pages": [
+            {
+                "wayback_url": "https://web.archive.org/web/20070418102623/http://www.phor.com/nonmem/nmo/index.html",
+                "base_url": "http://www.phor.com/nonmem/nmo/",
+                "link_pattern": re.compile(r'href="(topic\d{3}\.html)"', re.IGNORECASE),
+            },
+        ],
     },
 }
 
 
-def discover_urls(source: str) -> list[dict]:
-    """Query the Wayback CDX API to find all archived message URLs."""
-    config = CDX_QUERIES[source]
-    log.info(f"Querying CDX API for {source} archive...")
+def _query_cdx(url_pattern: str, filter_pattern: re.Pattern[str]) -> list[dict]:
+    """Query the Wayback CDX API for one URL pattern."""
+    log.info(f"Querying CDX API for {url_pattern}...")
 
     params = {
-        "url": config["url"],
+        "url": url_pattern,
         "output": "text",
         "fl": "timestamp,original",
         "collapse": "urlkey",  # One snapshot per unique URL
@@ -79,11 +104,73 @@ def discover_urls(source: str) -> list[dict]:
         if len(parts) != 2:
             continue
         timestamp, original_url = parts
-        if config["filter"].search(original_url):
+        if filter_pattern.search(original_url):
             results.append({"timestamp": timestamp, "url": original_url})
 
-    log.info(f"Found {len(results)} message pages in {source} archive")
     return results
+
+
+def _extract_wayback_timestamp(html: str, fallback: str) -> str:
+    """Prefer the actual replayed capture timestamp if Wayback redirected us."""
+    match = re.search(r'__wm\.wombat\(".*?","(\d+)"', html)
+    return match.group(1) if match else fallback
+
+
+def _harvest_index_links(index_config: dict) -> list[dict]:
+    """Fetch one archived index page and turn its relative links into manifest entries."""
+    wayback_url = index_config["wayback_url"]
+    requested_timestamp_match = re.search(r"/web/(\d+)/", wayback_url)
+    requested_timestamp = requested_timestamp_match.group(1) if requested_timestamp_match else ""
+
+    log.info(f"Harvesting links from {wayback_url}...")
+    with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=120, follow_redirects=True) as client:
+        response = client.get(wayback_url)
+        response.raise_for_status()
+
+    replay_timestamp = _extract_wayback_timestamp(response.text, requested_timestamp)
+    entries = []
+    seen_urls: set[str] = set()
+    for href in index_config["link_pattern"].findall(response.text):
+        original_url = urljoin(index_config["base_url"], href)
+        if original_url in seen_urls:
+            continue
+        seen_urls.add(original_url)
+        entries.append({"timestamp": replay_timestamp, "url": original_url})
+
+    log.info(f"Harvested {len(entries)} links from {wayback_url}")
+    return entries
+
+
+def _dedupe_entries(entries: list[dict]) -> list[dict]:
+    """Keep one entry per original URL, preferring the most recent timestamp."""
+    by_url: dict[str, dict] = {}
+    for entry in entries:
+        existing = by_url.get(entry["url"])
+        if existing is None or entry["timestamp"] > existing["timestamp"]:
+            by_url[entry["url"]] = entry
+    return [by_url[url] for url in sorted(by_url)]
+
+
+def discover_urls(source: str) -> list[dict]:
+    """Query the Wayback CDX API and archived indexes to find message URLs."""
+    config = CDX_QUERIES[source]
+    entries: list[dict] = []
+
+    for url_pattern in config.get("urls", []):
+        entries.extend(_query_cdx(url_pattern, config["filter"]))
+
+    for index_config in config.get("index_pages", []):
+        entries.extend(_harvest_index_links(index_config))
+
+    deduped = _dedupe_entries(
+        [entry for entry in entries if config["filter"].search(entry["url"])]
+    )
+    by_filename = _dedupe_entries_by_filename(deduped, source)
+    log.info(
+        f"Found {len(by_filename)} message pages in {source} archive"
+        + (f" ({len(deduped) - len(by_filename)} host/timestamp variants collapsed)" if len(by_filename) != len(deduped) else "")
+    )
+    return by_filename
 
 
 def url_to_filename(url: str, source: str) -> str:
@@ -92,12 +179,26 @@ def url_to_filename(url: str, source: str) -> str:
         # cognigencorp.com/nonmem/nm/99apr242002.html → 99apr242002.html
         match = re.search(r"(\d{2}\w{3}\d+\.html)$", url)
         return match.group(1) if match else url.split("/")[-1]
+    elif source == "phor_nmo":
+        match = re.search(r"(topic\d{3}\.html)$", url, re.IGNORECASE)
+        return match.group(1) if match else url.split("/")[-1]
     else:
         # cognigen.com/nmusers/2006-December/0015.html → 2006-December_0015.html
         match = re.search(r"(\d{4}-\w+)/(\d+\.html)$", url)
         if match:
             return f"{match.group(1)}_{match.group(2)}"
         return url.split("/")[-1]
+
+
+def _dedupe_entries_by_filename(entries: list[dict], source: str) -> list[dict]:
+    """Keep only the newest snapshot for each local target filename."""
+    by_filename: dict[str, dict] = {}
+    for entry in entries:
+        filename = url_to_filename(entry["url"], source)
+        current = by_filename.get(filename)
+        if current is None or entry["timestamp"] > current["timestamp"]:
+            by_filename[filename] = entry
+    return [by_filename[name] for name in sorted(by_filename)]
 
 
 async def download_snapshot(
@@ -160,7 +261,7 @@ async def download_all(source: str, max_workers: int = 2) -> list[dict]:
         return []
 
     import json
-    entries = json.loads(manifest_path.read_text())
+    entries = _dedupe_entries_by_filename(json.loads(manifest_path.read_text()), source)
 
     if not entries:
         log.warning(f"No URLs in manifest for {source}")
@@ -216,7 +317,7 @@ def cmd_discover(args):
     manifest_dir = Path("data/manifests")
     manifest_dir.mkdir(parents=True, exist_ok=True)
 
-    sources = ["old", "pipermail", "phor"] if args.source == "all" else [args.source]
+    sources = ["old", "pipermail", "phor", "phor_nmo"] if args.source == "all" else [args.source]
 
     for source in sources:
         entries = discover_urls(source)
@@ -227,7 +328,7 @@ def cmd_discover(args):
 
 def cmd_download(args):
     """Download pages from saved manifests."""
-    sources = ["old", "pipermail", "phor"] if args.source == "all" else [args.source]
+    sources = ["old", "pipermail", "phor", "phor_nmo"] if args.source == "all" else [args.source]
 
     for source in sources:
         asyncio.run(download_all(source, args.workers))
@@ -242,7 +343,7 @@ def main():
         "discover", help="Query CDX API and save URL manifests"
     )
     discover_parser.add_argument(
-        "--source", choices=["old", "pipermail", "phor", "all"], default="all",
+        "--source", choices=["old", "pipermail", "phor", "phor_nmo", "all"], default="all",
     )
 
     # download subcommand
@@ -250,7 +351,7 @@ def main():
         "download", help="Download pages from saved manifests"
     )
     download_parser.add_argument(
-        "--source", choices=["old", "pipermail", "phor", "all"], default="all",
+        "--source", choices=["old", "pipermail", "phor", "phor_nmo", "all"], default="all",
     )
     download_parser.add_argument(
         "--workers", type=int, default=2, help="Max concurrent requests",

@@ -20,7 +20,7 @@ from pathlib import Path
 from parse_cognigen import read_html
 
 import polars as pl
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,6 +90,80 @@ def parse_date(date_string: str) -> datetime | None:
         return datetime.strptime(cleaned, "%d %b %Y %H:%M:%S %z").astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def _normalize_mail_archive_text(text: str) -> str:
+    """Normalize extracted mail-archive text blocks."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _join_mail_archive_flow(lines: list[str]) -> str:
+    """Join flowed mail-archive <tt> lines back into a paragraph."""
+    parts = []
+    for line in lines:
+        normalized = re.sub(r"\s+", " ", line.replace("\xa0", " ").strip())
+        if normalized:
+            parts.append(normalized)
+    return " ".join(parts)
+
+
+def _quote_mail_archive_block(text: str) -> str:
+    """Represent blockquoted HTML as plain-text quote lines."""
+    lines = text.split("\n")
+    return "\n".join("> " + line if line else ">" for line in lines).strip()
+
+
+def _extract_mail_archive_fragment(node: Tag) -> str:
+    """Extract message text while preserving paragraphs and preformatted blocks."""
+    parts: list[str] = []
+    flowed_lines: list[str] = []
+
+    def flush_flowed() -> None:
+        if not flowed_lines:
+            return
+        paragraph = _join_mail_archive_flow(flowed_lines)
+        flowed_lines.clear()
+        if paragraph:
+            parts.append(paragraph)
+
+    for child in node.children:
+        if isinstance(child, Comment):
+            continue
+        if isinstance(child, NavigableString):
+            text = str(child)
+            if text.strip():
+                flowed_lines.append(text)
+            continue
+        if not isinstance(child, Tag):
+            continue
+
+        if child.name == "tt":
+            flowed_lines.append(child.get_text(" ", strip=False))
+            continue
+
+        flush_flowed()
+
+        if child.name == "pre":
+            block = _normalize_mail_archive_text(child.get_text())
+            if block:
+                parts.append(block)
+            continue
+
+        if child.name == "blockquote":
+            block = _extract_mail_archive_fragment(child)
+            if block:
+                parts.append(_quote_mail_archive_block(block))
+            continue
+
+        block = _normalize_mail_archive_text(child.get_text(" ", strip=False))
+        if block:
+            parts.append(block)
+
+    flush_flowed()
+    return "\n\n".join(part for part in parts if part)
 
 
 def _extract_thread_parent(soup: BeautifulSoup) -> int | None:
@@ -177,10 +251,11 @@ def parse_message(filepath: Path) -> dict | None:
     date_raw = date_el.get_text(strip=True) if date_el else ""
     date = parse_date(date_raw) if date_raw else None
 
-    # Body: get full text from div.msgBody (not just <pre> — some messages
-    # use <tt> tags for the reply text, with <pre> only for quoted content)
+    # Body: mail-archive mixes prose across many <tt> tags with <pre> blocks
+    # for explicitly preformatted text. Reconstruct flowed prose paragraphs
+    # instead of turning every HTML node boundary into a hard line break.
     msg_body = soup.select_one("div.msgBody")
-    body_raw = msg_body.get_text(separator="\n") if msg_body else ""
+    body_raw = _extract_mail_archive_fragment(msg_body) if msg_body else ""
     # Strip the "X-Body-of-Message" marker that mail-archive injects
     body_raw = body_raw.replace("X-Body-of-Message", "").strip()
     body_clean = strip_disclaimers(body_raw)

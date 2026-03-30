@@ -171,6 +171,12 @@ main {
   gap: 1rem;
 }
 
+.navbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .navbar-brand {
   font-weight: 700;
   font-size: 1.1rem;
@@ -201,7 +207,8 @@ main {
 }
 .navbar-links a:hover { color: var(--fg-nav-hover); text-decoration: none; }
 
-#theme-toggle {
+#theme-toggle,
+#soft-wrap-toggle {
   background: none;
   border: 1px solid var(--border);
   color: var(--fg-dim);
@@ -214,7 +221,20 @@ main {
   align-items: center;
   justify-content: center;
 }
-#theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+#soft-wrap-toggle {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  min-width: 5.75rem;
+}
+#theme-toggle:hover,
+#soft-wrap-toggle:hover { border-color: var(--accent); color: var(--accent); }
+#soft-wrap-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--fg-on-accent);
+}
 
 /* Show sun in dark mode, moon in light mode */
 #theme-toggle .icon-moon { display: none; }
@@ -333,6 +353,10 @@ main {
   line-height: 1.5;
   white-space: pre;
   overflow-x: auto;
+}
+[data-soft-wrap="on"] .msg-body {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .quoted-history {

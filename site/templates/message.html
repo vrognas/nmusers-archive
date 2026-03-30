@@ -6,8 +6,12 @@
 <nav class="breadcrumb" aria-label="Breadcrumb">
   <ol role="list">
     <li><a href="/">Home</a><span class="sep">/</span></li>
+    {% if year is not none and month_num %}
     <li><a href="/{{ year }}/">{{ year }}</a><span class="sep">/</span></li>
     <li><a href="/{{ year }}/{{ month_num }}/">{{ month_name }}</a></li>
+    {% else %}
+    <li>Undated</li>
+    {% endif %}
   </ol>
 </nav>
 

@@ -57,32 +57,42 @@ def load_source(name: str, path: Path) -> pl.DataFrame | None:
     # Normalize source to the canonical name from SOURCE_FILES
     df = df.with_columns(pl.lit(name).alias("source"))
 
-    # Generate source_url pointing to the original message
+    # Generate source_url pointing to the original message, but preserve
+    # parser-supplied URLs when a source already carries the right page path.
+    source_url_expr = None
     if name == "mail_archive" and "message_number" in df.columns:
-        df = df.with_columns(
-            (pl.lit("https://www.mail-archive.com/nmusers@globomaxnm.com/msg")
-             + pl.col("message_number").cast(pl.Utf8).str.zfill(5)
-             + pl.lit(".html")
-            ).alias("source_url")
+        source_url_expr = (
+            pl.lit("https://www.mail-archive.com/nmusers@globomaxnm.com/msg")
+            + pl.col("message_number").cast(pl.Utf8).str.zfill(5)
+            + pl.lit(".html")
         )
     elif name == "cognigencorp" and "source_file" in df.columns:
-        df = df.with_columns(
-            (pl.lit("https://web.archive.org/web/*/https://www.cognigencorp.com/nonmem/nm/")
-             + pl.col("source_file")
-            ).alias("source_url")
+        source_url_expr = (
+            pl.lit("https://web.archive.org/web/*/https://www.cognigencorp.com/nonmem/nm/")
+            + pl.col("source_file")
         )
     elif name == "pipermail" and "source_file" in df.columns:
-        df = df.with_columns(
-            (pl.lit("https://web.archive.org/web/*/https://www.cognigen.com/nmusers/")
-             + pl.col("source_file").str.replace("_", "/")
-            ).alias("source_url")
+        source_url_expr = (
+            pl.lit("https://web.archive.org/web/*/https://www.cognigen.com/nmusers/")
+            + pl.col("source_file").str.replace("_", "/")
         )
     elif name == "phor" and "source_file" in df.columns:
-        df = df.with_columns(
-            (pl.lit("https://web.archive.org/web/*/http://www.phor.com/nonmem/nm/")
-             + pl.col("source_file")
-            ).alias("source_url")
+        source_url_expr = (
+            pl.when(pl.col("source_file").str.contains(r"^topic\d{3}\.html$"))
+            .then(pl.lit("https://web.archive.org/web/*/http://www.phor.com/nonmem/nmo/") + pl.col("source_file"))
+            .otherwise(pl.lit("https://web.archive.org/web/*/http://www.phor.com/nonmem/nm/") + pl.col("source_file"))
         )
+
+    if source_url_expr is not None:
+        if "source_url" in df.columns:
+            df = df.with_columns(
+                pl.when(pl.col("source_url").is_null())
+                .then(source_url_expr)
+                .otherwise(pl.col("source_url"))
+                .alias("source_url")
+            )
+        else:
+            df = df.with_columns(source_url_expr.alias("source_url"))
 
     for col in SHARED_COLUMNS:
         if col not in df.columns:

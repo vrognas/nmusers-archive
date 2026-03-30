@@ -152,6 +152,8 @@ def clean_body(text: str) -> Markup:
     """Clean HTML remnants and auto-link URLs in message bodies."""
     # Replace U+FFFD replacement characters with best-guess substitution
     text = text.replace("\ufffd", "")
+    # Normalize CRLF/CR line endings before any newline-sensitive cleanup
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     # Convert <br>, <br/>, <br /> to newlines
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     # Convert <p> / </p> to double newlines
@@ -264,13 +266,13 @@ def order_thread_messages(messages: list[dict]) -> list[dict]:
 
 
 _TOP_POST_REPLY_PATTERNS = [
-    re.compile(r"\n(?:>\s*)?On [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bwrote:\s*\n", re.IGNORECASE),
+    re.compile(r"\n(?:>\s*)?On [^\n]+(?:\n(?:>\s*)?[^\n]*){0,8}\bwrote:\s*\n", re.IGNORECASE),
     re.compile(
-        r"\n(?:>\s*)?Op [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bhet volgende geschreven:\s*\n",
+        r"\n(?:>\s*)?Op [^\n]+(?:\n(?:>\s*)?[^\n]*){0,8}\bhet volgende geschreven:\s*\n",
         re.IGNORECASE,
     ),
-    re.compile(r"\n(?:>\s*)?Op [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bschreef:\s*\n", re.IGNORECASE),
-    re.compile(r"\n(?:>\s*)?El [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bescribió:\s*\n", re.IGNORECASE),
+    re.compile(r"\n(?:>\s*)?Op [^\n]+(?:\n(?:>\s*)?[^\n]*){0,8}\bschreef:\s*\n", re.IGNORECASE),
+    re.compile(r"\n(?:>\s*)?El [^\n]+(?:\n(?:>\s*)?[^\n]*){0,8}\bescribió:\s*\n", re.IGNORECASE),
     re.compile(r"\n(?:>\s*)?-+\s*Original Message\s*-+\s*\n", re.IGNORECASE),
     # Outlook-style quoted chains often start with a long underscore divider
     # before wrapped From/Sent/To/Subject headers.
@@ -427,11 +429,14 @@ def split_reply_history(text: str, source: str | None = None) -> tuple[str, str 
 def thread_page_url(thread_messages: list[dict]) -> str:
     """Build a stable URL for a full-thread page."""
     first = thread_messages[0]
-    identifier = (
-        first.get("thread_id")
-        or first.get("message_number")
-        or f"{first['year']}-{first['month']:02d}-{first['msg_seq']}"
-    )
+    identifier = first.get("thread_id") or first.get("message_number")
+    if not identifier:
+        if first.get("year") is not None and first.get("month") is not None:
+            identifier = f"{first['year']}-{first['month']:02d}-{first['msg_seq']}"
+        elif first.get("source_file"):
+            identifier = Path(first["source_file"]).stem
+        else:
+            identifier = f"undated-{first['msg_seq']}"
     subject_slug = slugify(display_thread_subject(first["subject"]))[:80] or "thread"
     return f"/threads/{subject_slug}-{identifier}/"
 
@@ -570,8 +575,13 @@ def load_data() -> pl.DataFrame:
         df = df.with_columns(
             pl.when(pl.col("thread_id").is_not_null())
             .then(pl.lit("ma:") + pl.col("thread_id").cast(pl.Utf8))
-            .when((pl.col("source") == "cognigencorp") & pl.col("source_url").is_not_null())
-            .then(pl.lit("cg:") + pl.col("source_url"))
+            .when(pl.col("source").is_in(["cognigencorp", "phor"]) & pl.col("source_url").is_not_null())
+            .then(
+                pl.when(pl.col("source") == "cognigencorp")
+                .then(pl.lit("cg:"))
+                .otherwise(pl.lit("ph:"))
+                + pl.col("source_url")
+            )
             .otherwise(pl.col("_subject_key"))
             .alias("thread_key"),
         )
@@ -589,7 +599,7 @@ def load_data() -> pl.DataFrame:
     dates = df["date"].to_list()
     new_keys = []
     for i, (tk, dt) in enumerate(zip(thread_keys, dates)):
-        if dt is None or tk.startswith(("ma:", "cg:")):
+        if dt is None or tk.startswith(("ma:", "cg:", "ph:")):
             # Skip time-splitting for source-native threads that are already grouped.
             new_keys.append(tk)
             continue
@@ -605,9 +615,11 @@ def load_data() -> pl.DataFrame:
             new_keys.append(f"{tk}#{seq}" if seq > 0 else tk)
     df = df.with_columns(pl.Series("thread_key", new_keys))
 
-    # Assign sequential IDs within each year-month group
+    # Assign sequential IDs within each year-month group. Use a non-null
+    # column for the cumulative count so undated rows do not all collapse
+    # to msg_seq=0.
     df = df.with_columns(
-        pl.cum_count("date").over("year", "month").alias("msg_seq"),
+        pl.cum_count("subject").over("year", "month").alias("msg_seq"),
     )
 
     log.info(f"Loaded {len(df)} messages")
@@ -843,15 +855,19 @@ def build_site(output_dir: Path):
     display_thread_groups: dict[str, list[dict]] = {}
     display_thread_epoch: dict[str, dict] = {}
     for r in rows:
-        if r["date"] is None:
-            continue
         norm_subject = normalize_subject(r["subject"])
-        if r.get("source") == "cognigencorp" and r.get("source_url"):
-            base_key = f"cg:{r['source_url']}"
+        if r.get("source") in {"cognigencorp", "phor"} and r.get("source_url"):
+            base_key = r.get("thread_key") or f"src:{r['source_url']}"
         elif norm_subject == "(no subject)":
             base_key = r.get("thread_key") or f"msg-{r['message_number'] or r['msg_seq']}"
         else:
             base_key = norm_subject or f"msg-{r['message_number'] or r['msg_seq']}"
+
+        if r["date"] is None:
+            r["display_thread_key"] = base_key
+            display_thread_groups.setdefault(base_key, []).append(r)
+            continue
+
         epoch = display_thread_epoch.get(base_key)
         if epoch is None:
             epoch = {"last_date": r["date"], "seq": 0}
@@ -867,11 +883,11 @@ def build_site(output_dir: Path):
 
     thread_meta: dict[str, dict] = {}
     for tk, msgs in display_thread_groups.items():
-        thread_msgs = [m for m in msgs if m["date"] is not None]
+        thread_msgs = order_thread_messages(msgs)
         if not thread_msgs:
             continue
-        thread_msgs = order_thread_messages(thread_msgs)
         subject = display_thread_subject(thread_msgs[0]["subject"])
+        last_dated = next((m for m in reversed(thread_msgs) if m["date"] is not None), thread_msgs[-1])
         thread_meta[tk] = {
             "subject": subject,
             "subject_lower": subject.lower(),
@@ -879,8 +895,8 @@ def build_site(output_dir: Path):
             "participants": len(set(m["from_name"] for m in thread_msgs)),
             "url": thread_page_url(thread_msgs),
             "messages": thread_msgs,
-            "last_date_short": thread_msgs[-1]["date_short"],
-            "last_date_sort": thread_msgs[-1]["date"].strftime("%Y-%m-%d"),
+            "last_date_short": last_dated["date_short"],
+            "last_date_sort": last_dated["date"].strftime("%Y-%m-%d") if last_dated["date"] else "",
         }
 
     # Build message_number → row lookup for computing reply depth
@@ -906,14 +922,11 @@ def build_site(output_dir: Path):
             current = parent.get("in_reply_to_number")
         return depth
 
-    # Build prev/next index (messages sorted by date)
-    dated_rows = [r for r in rows if r["date"] is not None]
+    # Build prev/next index across all generated message pages.
+    page_rows = rows
     msg_template = env.get_template("message.html")
     thread_page_template = env.get_template("thread_page.html")
-    for i, row in enumerate(dated_rows):
-        if row["year"] is None or row["month"] is None:
-            continue
-
+    for i, row in enumerate(page_rows):
         # Thread context with nesting depth
         tk = row.get("display_thread_key")
         thread_info = thread_meta.get(tk)
@@ -937,8 +950,8 @@ def build_site(output_dir: Path):
                 for t in thread_msgs
             ]
 
-        prev_url = dated_rows[i - 1]["url"] if i > 0 else None
-        next_url = dated_rows[i + 1]["url"] if i < len(dated_rows) - 1 else None
+        prev_url = page_rows[i - 1]["url"] if i > 0 else None
+        next_url = page_rows[i + 1]["url"] if i < len(page_rows) - 1 else None
         body_main, quoted_history = split_reply_history(row["body_clean"], row["source"])
 
         msg_html = msg_template.render(
@@ -949,8 +962,8 @@ def build_site(output_dir: Path):
             date_sort=row["date"].strftime("%Y-%m-%d") if row["date"] else "",
             category=row["category"],
             year=row["year"],
-            month_num=f"{row['month']:02d}",
-            month_name=MONTH_NAMES[row["month"]],
+            month_num=f"{row['month']:02d}" if row["month"] is not None else None,
+            month_name=MONTH_NAMES[row["month"]] if row["month"] is not None else None,
             body=clean_body(body_main),
             quoted_body=clean_body(quoted_history) if quoted_history else None,
             source=row["source"],
@@ -962,16 +975,11 @@ def build_site(output_dir: Path):
             next_url=next_url,
         )
 
-        msg_path = (
-            output_dir
-            / str(row["year"])
-            / f"{row['month']:02d}"
-            / f"{row['msg_seq']}.html"
-        )
+        msg_path = output_dir / row["url"].strip("/")
         msg_path.parent.mkdir(parents=True, exist_ok=True)
         msg_path.write_text(msg_html, encoding="utf-8")
 
-    log.info(f"Generated {len(dated_rows)} message pages")
+    log.info(f"Generated {len(page_rows)} message pages")
 
     # --- Full thread pages ---
     log.info("Generating full thread pages...")
@@ -1105,16 +1113,14 @@ def build_site(output_dir: Path):
 
     search_docs = []
     for r in rows:
-        if r["date"] is None:
-            continue
         search_docs.append(
             {
                 "subject": r["subject"],
                 "from_name": r["from_name"],
                 "body": r["body_clean"],
                 "category": r["category"],
-                "year": r["year"],
-                "date": r["date"].strftime("%Y-%m-%d"),
+                "year": r["year"] if r["year"] is not None else 0,
+                "date": r["date_short"],
                 "url": r["url"],
             }
         )
