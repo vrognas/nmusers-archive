@@ -29,7 +29,7 @@
     {% for t in threads %}
     <tr data-subject="{{ t.subject_lower }}" data-count="{{ t.count }}" data-latest="{{ t.last_date_sort }}">
       <td class="subject-col">
-        <a href="{{ t.first_url }}">{{ t.subject }}</a>
+        <a href="{{ t.thread_url }}">{{ t.subject }}</a>
         {% if t.participants > 1 %}
         <span class="thread-participants">&mdash; {{ t.participants }} people</span>
         {% endif %}

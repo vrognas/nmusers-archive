@@ -193,7 +193,7 @@ def clean_body(text: str) -> Markup:
 
 def normalize_subject(subject: str) -> str:
     """Strip Re:/FW: prefixes and [NMusers] tag for thread grouping."""
-    cleaned = subject.strip().replace("[NMusers]", "").strip()
+    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
     while True:
         new = cleaned
         for prefix in ["Re:", "RE:", "Fwd:", "FW:", "Fw:", "re:"]:
@@ -203,11 +203,237 @@ def normalize_subject(subject: str) -> str:
             break
         cleaned = new
     s = cleaned.lower().strip()
+    if s in {"", "no subject", "(no subject)"}:
+        return "(no subject)"
     # Normalize common spelling variants for better thread grouping
     s = s.replace("modelling", "modeling").replace("behaviour", "behavior")
     s = s.replace("minimisation", "minimization").replace("optimisation", "optimization")
     s = s.replace("parametrisation", "parametrization").replace("characterisation", "characterization")
     return s
+
+
+def display_subject(subject: str | None) -> str:
+    """Return a subject suitable for display, preserving reply prefixes."""
+    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
+    if cleaned.lower() in {"", "no subject", "(no subject)"}:
+        return "(no subject)"
+    return cleaned
+
+
+def display_thread_subject(subject: str) -> str:
+    """Strip common reply prefixes for display without lowercasing."""
+    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
+    while True:
+        new = cleaned
+        for prefix in ["Re:", "RE:", "Fwd:", "FW:", "Fw:", "re:"]:
+            if new.startswith(prefix):
+                new = new[len(prefix) :].strip()
+        if new == cleaned:
+            break
+        cleaned = new
+    if cleaned.lower() in {"", "no subject", "(no subject)"}:
+        return "(no subject)"
+    return cleaned
+
+
+_REPLY_PREFIX_RE = re.compile(r"^(?:(?:re|fw|fwd|aw)\s*:\s*)+", re.IGNORECASE)
+
+
+def is_reply_subject(subject: str | None) -> bool:
+    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
+    return bool(_REPLY_PREFIX_RE.match(cleaned))
+
+
+def order_thread_messages(messages: list[dict]) -> list[dict]:
+    """Prefer the earliest non-reply subject as thread starter, then chronological order."""
+    if not messages:
+        return []
+    ordered = sorted(
+        messages,
+        key=lambda m: (
+            m.get("date") is None,
+            m.get("date"),
+            m.get("msg_seq", 0),
+        ),
+    )
+    roots = [m for m in ordered if not is_reply_subject(m.get("subject"))]
+    if not roots:
+        return ordered
+    root = roots[0]
+    return [root] + [m for m in ordered if m is not root]
+
+
+_TOP_POST_REPLY_PATTERNS = [
+    re.compile(r"\n(?:>\s*)?On [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bwrote:\s*\n", re.IGNORECASE),
+    re.compile(
+        r"\n(?:>\s*)?Op [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bhet volgende geschreven:\s*\n",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\n(?:>\s*)?Op [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bschreef:\s*\n", re.IGNORECASE),
+    re.compile(r"\n(?:>\s*)?El [^\n]+(?:\n(?:>\s*)?[^\n]*){0,4}\bescribió:\s*\n", re.IGNORECASE),
+    re.compile(r"\n(?:>\s*)?-+\s*Original Message\s*-+\s*\n", re.IGNORECASE),
+    # Outlook-style quoted chains often start with a long underscore divider
+    # before wrapped From/Sent/To/Subject headers.
+    re.compile(r"\n_{8,}\s*\n(?=(?:From:|보낸 사람:)\s)", re.IGNORECASE),
+    re.compile(r"\nFrom:\s+.+\n(?:Sent|Date):\s+.+\nTo:\s+.+\nSubject:\s+.+\n", re.IGNORECASE),
+    re.compile(r"\nVan:\s+.+\nVerzonden:\s+.+\nAan:\s+.+\nOnderwerp:\s+.+\n", re.IGNORECASE),
+]
+
+_HEADER_START_LABELS = ("From:", "Van:", "보낸 사람:", "De:")
+_HEADER_SENT_LABELS = ("Sent:", "Date:", "Verzonden:", "보냄:", "Envoyé:", "Envoye:")
+_HEADER_TO_LABELS = ("To:", "Aan:", "받는 사람:", "À:", "A:")
+_HEADER_CC_LABELS = ("Cc:", "Kopie:", "참조:")
+_HEADER_SUBJECT_LABELS = ("Subject:", "Onderwerp:", "제목:", "Objet:")
+
+
+def _line_has_header_label(line: str, labels: tuple[str, ...]) -> bool:
+    """Return True when a line starts with one of the localized mail header labels."""
+    stripped = line.lstrip()
+    while stripped.startswith(">"):
+        stripped = stripped[1:].lstrip()
+    normalized = re.sub(r"\s*:\s*", ":", stripped, count=1).casefold()
+    return any(normalized.startswith(label.casefold()) for label in labels)
+
+
+def _find_wrapped_header_block(text: str) -> int | None:
+    """Detect Outlook-style quoted header blocks with localized labels and wrapped lines."""
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return None
+
+    offsets = []
+    position = 0
+    for line in lines:
+        offsets.append(position)
+        position += len(line)
+
+    for i, line in enumerate(lines):
+        if not _line_has_header_label(line, _HEADER_START_LABELS):
+            continue
+
+        seen_sent = False
+        seen_to = False
+        seen_subject = False
+        for j in range(i + 1, min(len(lines), i + 20)):
+            current = lines[j]
+            if _line_has_header_label(current, _HEADER_SENT_LABELS):
+                seen_sent = True
+            elif _line_has_header_label(current, _HEADER_TO_LABELS):
+                seen_to = True
+            elif _line_has_header_label(current, _HEADER_CC_LABELS):
+                continue
+            elif _line_has_header_label(current, _HEADER_SUBJECT_LABELS):
+                seen_subject = True
+
+            if seen_sent and seen_to and seen_subject:
+                return offsets[i]
+
+    return None
+
+
+_DATED_ATTRIBUTION_RE = re.compile(r"^\s*\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\S")
+
+
+def _find_dated_quoted_block(text: str) -> int | None:
+    """Detect Gmail-style attribution lines followed by a >-quoted original message."""
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return None
+
+    offsets = []
+    position = 0
+    for line in lines:
+        offsets.append(position)
+        position += len(line)
+
+    for i, line in enumerate(lines):
+        if not _DATED_ATTRIBUTION_RE.match(line):
+            continue
+
+        quote_count = 0
+        prelude_lines = 0
+        for j in range(i + 1, min(len(lines), i + 20)):
+            stripped = lines[j].strip()
+            if not stripped:
+                continue
+
+            if stripped.startswith(">"):
+                quote_count += 1
+                if quote_count >= 3:
+                    return offsets[i]
+                continue
+
+            if quote_count > 0:
+                break
+
+            # Allow wrapped attribution fragments before the quoted block starts.
+            if (
+                "@" in stripped
+                or "email" in stripped.casefold()
+                or "mailto:" in stripped.casefold()
+                or stripped.endswith("<")
+                or stripped.endswith(">")
+                or stripped in {"<", ">"}
+            ):
+                prelude_lines += 1
+                if prelude_lines > 4:
+                    break
+                continue
+
+            break
+
+    return None
+
+
+def split_reply_history(text: str, source: str | None = None) -> tuple[str, str | None]:
+    """Split an email body into the new content and quoted reply history."""
+    body = (text or "").strip()
+    if not body:
+        return "", None
+
+    patterns = _TOP_POST_REPLY_PATTERNS
+    if source == "cognigencorp":
+        # This source often starts with forwarded headers or quoted context
+        # before the new reply, so only split on explicit original-message blocks.
+        patterns = [re.compile(r"\n-+\s*Original Message\s*-+\s*\n", re.IGNORECASE)]
+
+    cut_points = []
+    for pattern in patterns:
+        match = pattern.search(body)
+        if match and match.start() > 0:
+            cut_points.append(match.start())
+
+    if source != "cognigencorp":
+        header_cut = _find_wrapped_header_block(body)
+        if header_cut is not None and header_cut > 0:
+            cut_points.append(header_cut)
+        dated_quote_cut = _find_dated_quoted_block(body)
+        if dated_quote_cut is not None and dated_quote_cut > 0:
+            cut_points.append(dated_quote_cut)
+
+    if not cut_points:
+        return body, None
+
+    cut = min(cut_points)
+    main = body[:cut].rstrip()
+    quoted = body[cut:].lstrip()
+
+    if not main or not quoted:
+        return body, None
+
+    return main, quoted
+
+
+def thread_page_url(thread_messages: list[dict]) -> str:
+    """Build a stable URL for a full-thread page."""
+    first = thread_messages[0]
+    identifier = (
+        first.get("thread_id")
+        or first.get("message_number")
+        or f"{first['year']}-{first['month']:02d}-{first['msg_seq']}"
+    )
+    subject_slug = slugify(display_thread_subject(first["subject"]))[:80] or "thread"
+    return f"/threads/{subject_slug}-{identifier}/"
 
 
 # Improved category patterns (applied at build time to override source data)
@@ -217,7 +443,7 @@ _CATEGORY_PATTERNS = {
         r"\bunsubscri|\bsubscri|remove me|sign.?off\b|"
         r"\bvirus\b|\bspam\b|do not open|phishing|"
         r"^test\b|test message|please ignore|do not respond|linkedin|"
-        r"^To:|email\s*protected|^\s*$",
+        r"^To:|email\s*protected",
         re.IGNORECASE,
     ),
     "event": re.compile(
@@ -262,8 +488,9 @@ _CATEGORY_PATTERNS = {
 }
 
 
-def classify_subject(subject: str) -> str:
-    """Classify a message by its subject line."""
+def classify_message(subject: str | None, body: str | None) -> str:
+    """Classify a message, primarily from its subject line."""
+    subject = subject or ""
     for category, pattern in _CATEGORY_PATTERNS.items():
         if pattern.search(subject):
             return category
@@ -301,18 +528,21 @@ def load_data() -> pl.DataFrame:
 
     # Reclassify with improved patterns
     df = df.with_columns(
-        pl.col("subject")
-        .map_elements(classify_subject, return_dtype=pl.Utf8)
+        pl.struct(["subject", "body_clean"])
+        .map_elements(
+            lambda row: classify_message(row["subject"], row["body_clean"]),
+            return_dtype=pl.Utf8,
+        )
         .alias("category"),
         pl.col("from_name")
         .map_elements(clean_from_name, return_dtype=pl.Utf8)
         .alias("from_name"),
     )
 
-    # Strip [NMusers] tag from display subject
+    # Normalize display subjects so blank subjects never render empty.
     df = df.with_columns(
         pl.col("subject")
-        .str.replace(r"\[NMusers\]\s*", "")
+        .map_elements(display_subject, return_dtype=pl.Utf8)
         .alias("subject"),
     )
 
@@ -334,11 +564,14 @@ def load_data() -> pl.DataFrame:
         .alias("_subject_key"),
     )
 
-    # Use mail-archive thread_id when available, otherwise subject-based key
+    # Use source-native thread metadata when available, otherwise fall back to subject.
+    # mail-archive has explicit thread ids; old Cognigen pages are multi-message thread pages.
     if "thread_id" in df.columns:
         df = df.with_columns(
             pl.when(pl.col("thread_id").is_not_null())
             .then(pl.lit("ma:") + pl.col("thread_id").cast(pl.Utf8))
+            .when((pl.col("source") == "cognigencorp") & pl.col("source_url").is_not_null())
+            .then(pl.lit("cg:") + pl.col("source_url"))
             .otherwise(pl.col("_subject_key"))
             .alias("thread_key"),
         )
@@ -356,8 +589,8 @@ def load_data() -> pl.DataFrame:
     dates = df["date"].to_list()
     new_keys = []
     for i, (tk, dt) in enumerate(zip(thread_keys, dates)):
-        if dt is None or tk.startswith("ma:"):
-            # Skip time-splitting for mail-archive threads (already properly threaded)
+        if dt is None or tk.startswith(("ma:", "cg:")):
+            # Skip time-splitting for source-native threads that are already grouped.
             new_keys.append(tk)
             continue
         if tk not in thread_epoch:
@@ -565,9 +798,6 @@ def build_site(output_dir: Path):
             month_groups[key] = []
         month_groups[key].append(r)
 
-    import re
-    re_prefix = re.compile(r"^(Re:|RE:|Fwd:|FW:|Fw:|re:)\s*")
-
     for (year, month), msgs in month_groups.items():
         if year is None or month is None:
             continue
@@ -581,7 +811,9 @@ def build_site(output_dir: Path):
             if tk not in thread_buckets:
                 thread_buckets[tk] = []
             thread_buckets[tk].append(m)
-        # Sort threads by latest message (descending), messages within thread by date (ascending)
+        for tk, thread in thread_buckets.items():
+            thread_buckets[tk] = order_thread_messages(thread)
+        # Sort threads by latest message (descending), messages within thread with the starter first
         sorted_threads = sorted(
             thread_buckets.values(),
             key=lambda t: t[-1]["date"] if t[-1]["date"] else t[0]["date"],
@@ -604,14 +836,52 @@ def build_site(output_dir: Path):
 
     # --- Message pages ---
     log.info("Generating message pages...")
-    # Build thread groups for "related messages" feature
-    thread_groups: dict[str, list[dict]] = {}
+    # Build display-oriented thread groups/metadata for message pages and full-thread pages.
+    # This intentionally follows subject continuity plus time gaps rather than raw source
+    # threading, because archive users typically want the topic on one page even when a
+    # reply changed the subject line mid-thread.
+    display_thread_groups: dict[str, list[dict]] = {}
+    display_thread_epoch: dict[str, dict] = {}
     for r in rows:
-        tk = r["thread_key"]
-        if tk:
-            if tk not in thread_groups:
-                thread_groups[tk] = []
-            thread_groups[tk].append(r)
+        if r["date"] is None:
+            continue
+        norm_subject = normalize_subject(r["subject"])
+        if r.get("source") == "cognigencorp" and r.get("source_url"):
+            base_key = f"cg:{r['source_url']}"
+        elif norm_subject == "(no subject)":
+            base_key = r.get("thread_key") or f"msg-{r['message_number'] or r['msg_seq']}"
+        else:
+            base_key = norm_subject or f"msg-{r['message_number'] or r['msg_seq']}"
+        epoch = display_thread_epoch.get(base_key)
+        if epoch is None:
+            epoch = {"last_date": r["date"], "seq": 0}
+            display_thread_epoch[base_key] = epoch
+        else:
+            gap = (r["date"] - epoch["last_date"]).days
+            if gap > 60:
+                epoch["seq"] += 1
+            epoch["last_date"] = r["date"]
+        display_key = f"{base_key}#{epoch['seq']}" if epoch["seq"] > 0 else base_key
+        r["display_thread_key"] = display_key
+        display_thread_groups.setdefault(display_key, []).append(r)
+
+    thread_meta: dict[str, dict] = {}
+    for tk, msgs in display_thread_groups.items():
+        thread_msgs = [m for m in msgs if m["date"] is not None]
+        if not thread_msgs:
+            continue
+        thread_msgs = order_thread_messages(thread_msgs)
+        subject = display_thread_subject(thread_msgs[0]["subject"])
+        thread_meta[tk] = {
+            "subject": subject,
+            "subject_lower": subject.lower(),
+            "count": len(thread_msgs),
+            "participants": len(set(m["from_name"] for m in thread_msgs)),
+            "url": thread_page_url(thread_msgs),
+            "messages": thread_msgs,
+            "last_date_short": thread_msgs[-1]["date_short"],
+            "last_date_sort": thread_msgs[-1]["date"].strftime("%Y-%m-%d"),
+        }
 
     # Build message_number → row lookup for computing reply depth
     msg_by_number: dict[int, dict] = {}
@@ -620,13 +890,15 @@ def build_site(output_dir: Path):
         if mn is not None:
             msg_by_number[mn] = r
 
-    def compute_depth(msg: dict) -> int:
+    def compute_depth(msg: dict, allowed_numbers: set[int] | None = None) -> int:
         """Follow in_reply_to chain to compute nesting depth."""
         depth = 0
         current = msg.get("in_reply_to_number")
         seen = set()
         while current is not None and current not in seen:
             seen.add(current)
+            if allowed_numbers is not None and current not in allowed_numbers:
+                break
             depth += 1
             parent = msg_by_number.get(current)
             if parent is None:
@@ -637,22 +909,27 @@ def build_site(output_dir: Path):
     # Build prev/next index (messages sorted by date)
     dated_rows = [r for r in rows if r["date"] is not None]
     msg_template = env.get_template("message.html")
+    thread_page_template = env.get_template("thread_page.html")
     for i, row in enumerate(dated_rows):
         if row["year"] is None or row["month"] is None:
             continue
 
         # Thread context with nesting depth
-        tk = row["thread_key"]
-        thread_msgs = thread_groups.get(tk, [])
+        tk = row.get("display_thread_key")
+        thread_info = thread_meta.get(tk)
+        thread_msgs = thread_info["messages"] if thread_info else []
         thread_context = None
         if len(thread_msgs) > 1:
+            thread_msg_numbers = {
+                t["message_number"] for t in thread_msgs if t.get("message_number") is not None
+            }
             thread_context = [
                 {
                     "date_short": t["date_short"],
                     "from_name": t["from_name"],
                     "subject": t["subject"],
                     "url": t["url"],
-                    "depth": compute_depth(t),
+                    "depth": compute_depth(t, thread_msg_numbers),
                     "is_current": t["msg_seq"] == row["msg_seq"]
                     and t["year"] == row["year"]
                     and t["month"] == row["month"],
@@ -662,6 +939,7 @@ def build_site(output_dir: Path):
 
         prev_url = dated_rows[i - 1]["url"] if i > 0 else None
         next_url = dated_rows[i + 1]["url"] if i < len(dated_rows) - 1 else None
+        body_main, quoted_history = split_reply_history(row["body_clean"], row["source"])
 
         msg_html = msg_template.render(
             subject=row["subject"],
@@ -673,10 +951,13 @@ def build_site(output_dir: Path):
             year=row["year"],
             month_num=f"{row['month']:02d}",
             month_name=MONTH_NAMES[row["month"]],
-            body=clean_body(row["body_clean"]),
+            body=clean_body(body_main),
+            quoted_body=clean_body(quoted_history) if quoted_history else None,
             source=row["source"],
             source_url=row.get("source_url", ""),
             thread_messages=thread_context,
+            thread_url=thread_info["url"] if thread_info and len(thread_msgs) > 1 else None,
+            thread_count=thread_info["count"] if thread_info else 1,
             prev_url=prev_url,
             next_url=next_url,
         )
@@ -691,6 +972,42 @@ def build_site(output_dir: Path):
         msg_path.write_text(msg_html, encoding="utf-8")
 
     log.info(f"Generated {len(dated_rows)} message pages")
+
+    # --- Full thread pages ---
+    log.info("Generating full thread pages...")
+    thread_page_count = 0
+    for meta in thread_meta.values():
+        thread_messages = []
+        for msg in meta["messages"]:
+            body_main, quoted_history = split_reply_history(msg["body_clean"], msg["source"])
+            thread_messages.append(
+                {
+                    "subject": msg["subject"],
+                    "from_name": msg["from_name"],
+                    "author_slug": msg["author_slug"],
+                    "date_long": msg["date_long"],
+                    "date_short": msg["date_short"],
+                    "category": msg["category"],
+                    "url": msg["url"],
+                    "body": clean_body(body_main),
+                    "quoted_body": clean_body(quoted_history) if quoted_history else None,
+                }
+            )
+
+        thread_html = thread_page_template.render(
+            thread_subject=meta["subject"],
+            thread_count=meta["count"],
+            participant_count=meta["participants"],
+            last_date_short=meta["last_date_short"],
+            messages=thread_messages,
+        )
+
+        thread_dir = output_dir / meta["url"].strip("/")
+        thread_dir.mkdir(parents=True, exist_ok=True)
+        (thread_dir / "index.html").write_text(thread_html, encoding="utf-8")
+        thread_page_count += 1
+
+    log.info(f"Generated {thread_page_count} full thread pages")
 
     # --- Author pages ---
     log.info("Generating author pages...")
@@ -763,28 +1080,22 @@ def build_site(output_dir: Path):
 
     # --- Threads index page ---
     log.info("Generating threads page...")
-    thread_list = []
-    for tk, msgs in thread_groups.items():
-        if not msgs:
-            continue
-        dated = [m for m in msgs if m["date"] is not None]
-        if not dated:
-            continue
-        dated.sort(key=lambda m: m["date"])
-        participants = len(set(m["from_name"] for m in msgs))
-        thread_list.append({
-            "subject": dated[0]["subject"].replace("Re: ", "").replace("RE: ", "").strip(),
-            "subject_lower": tk,
-            "count": len(msgs),
-            "participants": participants,
-            "first_url": dated[0]["url"],
-            "last_date_short": dated[-1]["date_short"],
-            "last_date_sort": dated[-1]["date"].strftime("%Y-%m-%d"),
-        })
+    thread_list = [
+        {
+            "subject": meta["subject"],
+            "subject_lower": meta["subject_lower"],
+            "count": meta["count"],
+            "participants": meta["participants"],
+            "thread_url": meta["url"],
+            "last_date_short": meta["last_date_short"],
+            "last_date_sort": meta["last_date_sort"],
+        }
+        for meta in thread_meta.values()
+    ]
     thread_list.sort(key=lambda t: t["last_date_sort"], reverse=True)
 
     threads_dir = output_dir / "threads"
-    threads_dir.mkdir()
+    threads_dir.mkdir(exist_ok=True)
     threads_html = env.get_template("threads.html").render(threads=thread_list)
     (threads_dir / "index.html").write_text(threads_html, encoding="utf-8")
     log.info(f"Generated threads page with {len(thread_list)} threads")

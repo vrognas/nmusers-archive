@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ thread_subject }} &mdash; Thread &mdash; NMusers Archive{% endblock %}
+{% block description %}Full thread view for {{ thread_subject }} on the NMusers mailing list.{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <ol role="list">
+    <li><a href="/">Home</a><span class="sep">/</span></li>
+    <li><a href="/threads/">Threads</a><span class="sep">/</span></li>
+    <li>{{ thread_subject }}</li>
+  </ol>
+</nav>
+
+<div class="msg-header">
+  <h1>{{ thread_subject }}</h1>
+  <div class="msg-meta">
+    <span>{{ thread_count }} messages</span>
+    <span>{{ participant_count }} people</span>
+    <span>Latest: {{ last_date_short }}</span>
+  </div>
+</div>
+
+{% for msg in messages %}
+<article class="card thread-message">
+  <div class="msg-header thread-message-header">
+    <h2><a href="{{ msg.url }}">{{ msg.subject }}</a></h2>
+    <div class="msg-meta">
+      <span>From: <a href="/authors/{{ msg.author_slug }}/">{{ msg.from_name }}</a></span>
+      <span>Date: {{ msg.date_long }}</span>
+      <span class="badge badge-{{ msg.category }}">{{ msg.category }}</span>
+    </div>
+  </div>
+
+  <div class="msg-body">{{ msg.body }}</div>
+  {% if msg.quoted_body %}
+  <details class="quoted-history">
+    <summary>Quoted reply history</summary>
+    <div class="msg-body">{{ msg.quoted_body }}</div>
+  </details>
+  {% endif %}
+</article>
+{% endfor %}
+{% endblock %}

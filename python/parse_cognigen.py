@@ -237,6 +237,133 @@ def parse_date_flexible(date_string: str) -> datetime | None:
 
 # --- Old format parser (cognigencorp.com) ---
 
+def _extract_old_format_text(soup: BeautifulSoup) -> str:
+    """Extract text from old Cognigen pages without fake newlines between inline nodes."""
+    root = soup.body if soup.body else soup
+    html = str(root)
+    # fm2html pages often include literal source newlines around <BR> tags.
+    # Trim that wrapper whitespace first so one intended line break does not
+    # turn into two when <BR> is converted below.
+    html = re.sub(r"(?is)\s*(<br\s*/?>)\s*", r"\1", html)
+    html = re.sub(r"(?i)<br\s*/?>\s*", "\n", html)
+    html = re.sub(r"(?is)</p>\s*<p[^>]*>", "\n\n", html)
+    html = re.sub(r"(?i)</?p[^>]*>", "", html)
+
+    working = BeautifulSoup(html, "html.parser")
+    text = working.get_text()
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
+def _normalize_old_format_block(block: str, page_title: str) -> str:
+    """Drop leaked page titles and compact the inline header prelude."""
+    lines = block.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    if page_title and lines and lines[0].strip() == page_title.strip():
+        nonblank_after = next((line.strip() for line in lines[1:] if line.strip()), "")
+        if nonblank_after.startswith(("From:", "Date:")):
+            lines.pop(0)
+            while lines and not lines[0].strip():
+                lines.pop(0)
+
+    header_labels = ("From:", "Subject:", "Date:", "Sent:")
+    first_header_idx = next(
+        (
+            idx for idx, line in enumerate(lines[:8])
+            if line.strip().startswith(header_labels) or re.match(r"^\s*From\s+\S", line)
+        ),
+        None,
+    )
+    if first_header_idx and first_header_idx > 0:
+        lines = lines[first_header_idx:]
+
+    header_mode = True
+    normalized: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if header_mode and stripped.startswith(header_labels):
+            normalized.append(stripped)
+            continue
+        if header_mode and not stripped:
+            continue
+        header_mode = False
+        normalized.append(line.rstrip())
+
+    text = "\n".join(normalized).strip()
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def _looks_like_old_message_start(lines: list[str], start_idx: int) -> bool:
+    """Detect whether lines after a separator begin a new message header block."""
+    found_headers: set[str] = set()
+    seen_nonblank = 0
+
+    for line in lines[start_idx:]:
+        stripped = line.strip()
+        if not stripped or re.fullmatch(r"[_-]{1,3}", stripped):
+            continue
+
+        seen_nonblank += 1
+        header_match = re.match(r"^(From:|Subject:|Date:|Sent:)", stripped, re.IGNORECASE)
+        if header_match:
+            found_headers.add(header_match.group(1).rstrip(":").lower())
+        elif re.match(r"^From\s+\S", stripped, re.IGNORECASE):
+            found_headers.add("from")
+
+        if seen_nonblank >= 6:
+            break
+
+    return len(found_headers) >= 2 and ("from" in found_headers or "subject" in found_headers)
+
+
+def _split_old_format_blocks(body_text: str) -> list[str]:
+    """Split old Cognigen thread pages into message-like blocks.
+
+    These pages use visual separators inconsistently:
+      - old Adobe/FrameMaker pages often use `****`
+      - 2002 digest pages use dashed lines inside `<pre>`
+      - posted code can also contain long separator lines
+
+    Only treat a separator as a message boundary when the following lines
+    actually look like a new header block.
+    """
+    lines = body_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    blocks: list[str] = []
+    current: list[str] = []
+
+    idx = 0
+    while idx < len(lines):
+        if re.fullmatch(r"\s*(?:_{7,}|={7,}|\*{4,}|-{7,})\s*", lines[idx]):
+            next_idx = idx + 1
+            while next_idx < len(lines):
+                stripped = lines[next_idx].strip()
+                if not stripped or re.fullmatch(r"[_-]{1,3}", stripped):
+                    next_idx += 1
+                    continue
+                break
+
+            if _looks_like_old_message_start(lines, next_idx):
+                block = "\n".join(current).strip()
+                if block:
+                    blocks.append(block)
+                current = []
+                idx = next_idx
+                continue
+
+        current.append(lines[idx])
+        idx += 1
+
+    block = "\n".join(current).strip()
+    if block:
+        blocks.append(block)
+
+    return blocks
+
 def parse_old_format_page(filepath: Path) -> list[dict]:
     """Parse a cognigencorp old-format page.
 
@@ -253,12 +380,15 @@ def parse_old_format_page(filepath: Path) -> list[dict]:
     title_el = soup.find("title")
     page_title = title_el.get_text(strip=True) if title_el else ""
 
-    body_text = soup.get_text(separator="\n")
+    body_text = _extract_old_format_text(soup)
 
     messages = []
 
-    # Split on separator patterns (horizontal rules between messages)
-    message_blocks = re.split(r"_{10,}|={10,}|\*{4,}", body_text)
+    # Split only when a separator is followed by the start of another message.
+    # Old Cognigen pages often include long separator lines inside posted code
+    # or signatures, and some thread pages start the next message with Subject
+    # or Date rather than From.
+    message_blocks = _split_old_format_blocks(body_text)
 
     if len(message_blocks) <= 1:
         # Single message page
@@ -310,6 +440,7 @@ def _extract_message_from_block(
     block: str, page_title: str, filename: str, prev_block: str = "",
 ) -> dict | None:
     """Extract a single message dict from a text block."""
+    block = _normalize_old_format_block(block, page_title)
     # Match From: with value on same line, or on the next line if current line is empty
     from_match = re.search(r"From:\s*(\S.+?)(?:\n|$)", block)
     if not from_match:

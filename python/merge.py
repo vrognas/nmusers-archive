@@ -102,10 +102,8 @@ def load_source(name: str, path: Path) -> pl.DataFrame | None:
 
 
 def normalize_subject(subject: str | None) -> str:
-    """Strip Re:/FW: prefixes and [NMusers] tag for dedup matching."""
-    if subject is None:
-        return ""
-    cleaned = subject.strip().replace("[NMusers]", "").strip()
+    """Strip Re:/FW: prefixes and canonicalize blank/no-subject variants."""
+    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
     while True:
         new = cleaned
         for prefix in ["Re:", "RE:", "Fwd:", "FW:", "Fw:"]:
@@ -114,7 +112,19 @@ def normalize_subject(subject: str | None) -> str:
         if new == cleaned:
             break
         cleaned = new
-    return cleaned.lower().strip()
+    normalized = cleaned.lower().strip()
+    if normalized in {"", "no subject", "(no subject)"}:
+        return "(no subject)"
+    return normalized
+
+
+def normalize_body_signature(body: str | None) -> str:
+    """Build a short, whitespace-insensitive body signature for dedup safety."""
+    text = (body or "").replace("\xa0", " ")
+    # Undo quoted-printable soft wraps commonly present in pipermail bodies.
+    text = re.sub(r"=\s+", "", text)
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return text[:160]
 
 
 def deduplicate(df: pl.DataFrame) -> pl.DataFrame:
@@ -128,16 +138,58 @@ def deduplicate(df: pl.DataFrame) -> pl.DataFrame:
         pl.col("subject")
         .map_elements(normalize_subject, return_dtype=pl.Utf8)
         .alias("_norm_subject"),
+        pl.col("body_clean")
+        .map_elements(normalize_body_signature, return_dtype=pl.Utf8)
+        .alias("_body_sig"),
         pl.col("date").cast(pl.Date).alias("_date_day"),
     )
+    df = df.with_columns(
+        pl.when(pl.col("_norm_subject") == "(no subject)")
+        .then(pl.col("_body_sig"))
+        .otherwise(pl.lit(""))
+        .alias("_blank_subject_sig")
+    )
+    coarse_subset = ["_norm_subject", "_blank_subject_sig", "_date_day", "from_name"]
+    exact_subset = ["source", "source_url", "subject", "date", "body_clean", "from_name"]
+    group_stats = df.group_by(coarse_subset).agg(
+        pl.col("source_url").n_unique().alias("_source_url_count"),
+        pl.len().alias("_group_rows"),
+    )
+    df = df.join(group_stats, on=coarse_subset, how="left")
 
     deduped = (
         df.sort("_priority")
-        .unique(subset=["_norm_subject", "_date_day", "from_name"], keep="first")
-        .drop("_priority", "_norm_subject", "_date_day")
+        .unique(subset=coarse_subset, keep="first")
+    )
+
+    # Some archived digest pages contain multiple legitimate follow-up mails
+    # from the same author on the same day under the same subject. Keep those
+    # rows when they only collide within a single source page; continue to let
+    # the normal coarse key collapse cross-source duplicates.
+    same_page_followups = (
+        df.filter((pl.col("_group_rows") > 1) & (pl.col("_source_url_count") == 1))
+        .sort("_priority")
+        .unique(subset=exact_subset, keep="first")
+    )
+    restored = same_page_followups.join(deduped.select(exact_subset), on=exact_subset, how="anti")
+
+    deduped = (
+        pl.concat([deduped, restored], how="diagonal")
+        .drop(
+            "_priority",
+            "_norm_subject",
+            "_body_sig",
+            "_blank_subject_sig",
+            "_date_day",
+            "_source_url_count",
+            "_group_rows",
+        )
+        .sort("date")
     )
 
     removed = len(df) - len(deduped)
+    if len(restored) > 0:
+        log.info(f"Restored {len(restored)} same-page follow-up messages after dedupe")
     log.info(f"Deduplicated: {len(df)} -> {len(deduped)} ({removed} duplicates removed)")
     return deduped.sort("date")
 

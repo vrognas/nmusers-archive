@@ -335,6 +335,18 @@ main {
   overflow-x: auto;
 }
 
+.quoted-history {
+  margin-top: 0.75rem;
+}
+.quoted-history summary {
+  cursor: pointer;
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+.quoted-history .msg-body {
+  margin-top: 0.75rem;
+}
+
 .msg-nav {
   display: flex;
   justify-content: space-between;
@@ -348,7 +360,27 @@ main {
 .thread-list {
   margin-top: 1.5rem;
 }
-.thread-list h3 { margin-bottom: 0.5rem; }
+.thread-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.thread-list h3 { margin-bottom: 0; }
+
+.thread-message {
+  margin-top: 1rem;
+}
+.thread-message h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.4rem;
+}
+.thread-message-header {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+}
 
 /* Thread view */
 .thread-reply .subject-col { padding-left: 2rem; }

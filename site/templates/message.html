@@ -23,11 +23,20 @@
   </div>
 
   <div class="msg-body">{{ body }}</div>
+  {% if quoted_body %}
+  <details class="quoted-history">
+    <summary>Quoted reply history</summary>
+    <div class="msg-body">{{ quoted_body }}</div>
+  </details>
+  {% endif %}
 </article>
 
 {% if thread_messages %}
 <div class="thread-list">
-  <h3>Related messages (same thread)</h3>
+  <div class="thread-list-header">
+    <h3>Thread</h3>
+    {% if thread_url %}<a href="{{ thread_url }}">View all {{ thread_count }} messages</a>{% endif %}
+  </div>
   <table class="msg-table" aria-label="Related messages in this thread">
     <tbody>
       {% for t in thread_messages %}
