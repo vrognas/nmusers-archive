@@ -4,14 +4,11 @@
   function getPreferred() {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return stored;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
+    return "light";
   }
 
   function apply(theme) {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem(STORAGE_KEY, theme);
   }
 
   // Apply immediately to avoid flash
@@ -22,7 +19,9 @@
     if (btn) {
       btn.addEventListener("click", function () {
         const current = document.documentElement.getAttribute("data-theme");
-        apply(current === "dark" ? "light" : "dark");
+        const next = current === "dark" ? "light" : "dark";
+        apply(next);
+        localStorage.setItem(STORAGE_KEY, next);
       });
     }
   });

@@ -1,39 +1,8 @@
 /* Gruvbox-inspired theme matching vrognas.com */
 
 :root {
-  color-scheme: dark;
-  /* Dark theme (default) */
-  --bg: #282828;
-  --bg-alt: #1d2021;
-  --bg-card: #3c3836;
-  --bg-hover: #504945;
-  --fg: #ebdbb2;
-  --fg-nav: #ebdbb2;
-  --fg-nav-hover: #bdae93;
-  --fg-dim: #bdae93;
-  --fg-muted: #b3a48d;
-  --accent: #8cbd7a;
-  --accent-hover: #b8bb26;
-  --link: #8cbd7a;
-  --link-hover: #b8bb26;
-  --border: #504945;
-  --badge-technical: #6e9a9d;
-  --badge-job: #b89d57;
-  --badge-event: #b88ca3;
-  --badge-news: #c49472;
-  --badge-technical-fg: #1d2021;
-  --badge-job-fg: #1d2021;
-  --badge-event-fg: #1d2021;
-  --badge-news-fg: #1d2021;
-  --badge-admin-fg: #1d2021;
-  --fg-on-accent: #1d2021;
-  --code-bg: #1d2021;
-  --shadow: rgba(0, 0, 0, 0.3);
-  --overlay: rgba(0, 0, 0, 0.5);
-}
-
-[data-theme="light"] {
   color-scheme: light;
+  /* Light theme (default) */
   --bg: #ffffff;
   --bg-alt: #f1f1ec;
   --bg-card: #f2f2f2;
@@ -61,6 +30,37 @@
   --code-bg: #f7f7f7;
   --shadow: rgba(0, 0, 0, 0.08);
   --overlay: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #282828;
+  --bg-alt: #1d2021;
+  --bg-card: #3c3836;
+  --bg-hover: #504945;
+  --fg: #ebdbb2;
+  --fg-nav: #ebdbb2;
+  --fg-nav-hover: #bdae93;
+  --fg-dim: #bdae93;
+  --fg-muted: #b3a48d;
+  --accent: #8cbd7a;
+  --accent-hover: #b8bb26;
+  --link: #8cbd7a;
+  --link-hover: #b8bb26;
+  --border: #504945;
+  --badge-technical: #6e9a9d;
+  --badge-job: #b89d57;
+  --badge-event: #b88ca3;
+  --badge-news: #c49472;
+  --badge-technical-fg: #1d2021;
+  --badge-job-fg: #1d2021;
+  --badge-event-fg: #1d2021;
+  --badge-news-fg: #1d2021;
+  --badge-admin-fg: #1d2021;
+  --fg-on-accent: #1d2021;
+  --code-bg: #1d2021;
+  --shadow: rgba(0, 0, 0, 0.3);
+  --overlay: rgba(0, 0, 0, 0.5);
 }
 
 /* Visually hidden (screen reader only) */
