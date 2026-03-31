@@ -2,7 +2,8 @@
 
 ## Project Overview
 
-This project scrapes, parses, and archives the NMusers mailing list — the primary discussion forum for NONMEM (pharmacometrics software) users. It combines four data sources spanning 1993–present into a single deduplicated Parquet dataset, and generates a static website at nmusers.vrognas.com.
+This project scrapes, parses, and archives the NMusers mailing list, a discussion forum for NONMEM (pharmacometrics software) users.
+It combines four data sources spanning 1993–present into a single deduplicated Parquet dataset, and generates a static website at nmusers.vrognas.com.
 
 The archive preserves historically significant pharmacometrics content, including contributions from NONMEM's creators (Lewis B. Sheiner, Stuart Beal).
 
@@ -67,11 +68,18 @@ uv run python site/build.py --serve                                  # Build + s
 
 ## Key Design Decisions
 
-- **Thread reconstruction**: mail-archive messages use `in_reply_to_number` from the HTML thread tree (`tSliceList`). Non-mail-archive sources use subject-based grouping with time-aware splitting (60-day gap → new thread). Mail-archive threads (`ma:` prefix) are never time-split.
-- **Author normalization**: `data/author_overrides.json` maps raw names to canonical forms. Overrides are checked both before and after cleanup (title stripping, Last/First flipping, etc).
-- **Category classification**: regex-based on subject lines. Five categories: technical (default), job, event, news, admin. Order matters — admin checked first, then event, job, news.
-- **Body parsing**: mail-archive uses mixed `<tt>` (flowed text) and `<pre>` (preformatted) blocks. The parser reconstructs paragraphs from `<tt>` chains and preserves `<pre>` blocks. Old-format (cognigencorp) pages bundle multiple messages per page, split on `****` separators.
-- **Deduplication**: subject + from_name + date (rounded to day) + body signature. Same-page follow-ups (multiple messages from same author on same day) are restored after dedup.
+- **Thread reconstruction**: mail-archive messages use `in_reply_to_number` from the HTML thread tree (`tSliceList`).
+Non-mail-archive sources use subject-based grouping with time-aware splitting (60-day gap → new thread).
+Mail-archive threads (`ma:` prefix) are never time-split.
+- **Author normalization**: `data/author_overrides.json` maps raw names to canonical forms.
+Overrides are checked both before and after cleanup (title stripping, Last/First flipping, etc).
+- **Category classification**: regex-based on subject lines. Five categories: technical (default), job, event, news, admin.
+Order matters — admin checked first, then event, job, news.
+- **Body parsing**: mail-archive uses mixed `<tt>` (flowed text) and `<pre>` (preformatted) blocks.
+The parser reconstructs paragraphs from `<tt>` chains and preserves `<pre>` blocks.
+Old-format (cognigencorp) pages bundle multiple messages per page, split on `****` separators.
+- **Deduplication**: subject + from_name + date (rounded to day) + body signature.
+Same-page follow-ups (multiple messages from same author on same day) are restored after dedup.
 
 ## File Conventions
 

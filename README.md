@@ -1,6 +1,6 @@
 # NMusers Mailing List Archive
 
-A structured, searchable archive of the [NMusers mailing list](https://www.mail-archive.com/nmusers@globomaxnm.com/) — the primary discussion forum for [NONMEM](https://www.iconplc.com/innovation/nonmem/) users in pharmacometrics.
+A structured, searchable archive of the [NMusers mailing list](https://www.mail-archive.com/nmusers@globomaxnm.com/), a discussion forum for [NONMEM](https://www.iconplc.com/innovation/nonmem/) users in pharmacometrics.
 
 **Live site: [nmusers.vrognas.com](https://nmusers.vrognas.com)**
 
@@ -8,7 +8,8 @@ Inspired by the [R Mailing List Archives](https://r-mailing-lists.thecoatlesspro
 
 ## About NMusers
 
-The NONMEM Users Network (NMusers) is maintained by ICON Clinical Research LLC and has been active since at least 1993. It covers NONMEM usage, pharmacokinetic/pharmacodynamic modeling, and pharmacometrics in general.
+The NONMEM Users Network (NMusers) is maintained by ICON Clinical Research LLC and has been active since at least 1993.
+It covers NONMEM usage, pharmacokinetic/pharmacodynamic modeling, and pharmacometrics in general.
 
 The archive includes contributions from NONMEM's creators (Lewis B. Sheiner, Stuart Beal) and generations of pharmacometricians.
 
@@ -163,8 +164,10 @@ nmusers-archive/
 
 ## Privacy
 
-Email addresses are not stored. Display names are retained as they appear in the public archive, with manual corrections for consistency.
+Email addresses are not stored.
+Display names are retained as they appear in the public archive, with manual corrections for consistency.
 
 ## License
 
-Code: MIT. The mailing list content is publicly archived and belongs to its respective authors.
+Code: MIT.
+The mailing list content is publicly archived and belongs to its respective authors.
