@@ -195,9 +195,9 @@ def clean_body(text: str) -> Markup:
 
 def normalize_subject(subject: str) -> str:
     """Strip Re:/FW: prefixes and [NMusers] tag for thread grouping."""
-    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
+    cleaned = (subject or "").strip()
     while True:
-        new = cleaned
+        new = strip_subject_tags(cleaned)
         for prefix in ["Re:", "RE:", "Fwd:", "FW:", "Fw:", "re:"]:
             if new.startswith(prefix):
                 new = new[len(prefix) :].strip()
@@ -224,9 +224,9 @@ def display_subject(subject: str | None) -> str:
 
 def display_thread_subject(subject: str) -> str:
     """Strip common reply prefixes for display without lowercasing."""
-    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
+    cleaned = (subject or "").strip()
     while True:
-        new = cleaned
+        new = strip_subject_tags(cleaned)
         for prefix in ["Re:", "RE:", "Fwd:", "FW:", "Fw:", "re:"]:
             if new.startswith(prefix):
                 new = new[len(prefix) :].strip()
@@ -239,11 +239,28 @@ def display_thread_subject(subject: str) -> str:
 
 
 _REPLY_PREFIX_RE = re.compile(r"^(?:(?:re|fw|fwd|aw)\s*:\s*)+", re.IGNORECASE)
+_THREAD_TAG_RE = re.compile(r"^\[(?:nmusers|external(?:\s+email)?)\]\s*", re.IGNORECASE)
+
+
+def strip_subject_tags(subject: str | None) -> str:
+    """Remove transport/list tags like [NMusers] and [External email] from the start."""
+    cleaned = (subject or "").strip()
+    while True:
+        new = _THREAD_TAG_RE.sub("", cleaned).strip()
+        if new == cleaned:
+            return cleaned
+        cleaned = new
 
 
 def is_reply_subject(subject: str | None) -> bool:
-    cleaned = (subject or "").strip().replace("[NMusers]", "").strip()
-    return bool(_REPLY_PREFIX_RE.match(cleaned))
+    cleaned = (subject or "").strip()
+    while True:
+        new = strip_subject_tags(cleaned)
+        if _REPLY_PREFIX_RE.match(new):
+            return True
+        if new == cleaned:
+            return False
+        cleaned = new
 
 
 def order_thread_messages(messages: list[dict]) -> list[dict]:
@@ -273,6 +290,7 @@ _TOP_POST_REPLY_PATTERNS = [
     ),
     re.compile(r"\n(?:>\s*)?Op [^\n]+(?:\n(?:>\s*)?[^\n]*){0,8}\bschreef:\s*\n", re.IGNORECASE),
     re.compile(r"\n(?:>\s*)?El [^\n]+(?:\n(?:>\s*)?[^\n]*){0,8}\bescribió:\s*\n", re.IGNORECASE),
+    re.compile(r"\n(?:>\s*)?Le [^\n]+(?:\n(?:>\s*)?[^\n]*){0,8}\ba [ée]crit\s*:\s*\n", re.IGNORECASE),
     re.compile(r"\n(?:>\s*)?-+\s*Original Message\s*-+\s*\n", re.IGNORECASE),
     # Outlook-style quoted chains often start with a long underscore divider
     # before wrapped From/Sent/To/Subject headers.
@@ -854,9 +872,27 @@ def build_site(output_dir: Path):
     # reply changed the subject line mid-thread.
     display_thread_groups: dict[str, list[dict]] = {}
     display_thread_epoch: dict[str, dict] = {}
+    cognigen_source_subjects: dict[str, set[str]] = {}
+    for r in rows:
+        if r.get("source") != "cognigencorp" or not r.get("source_url"):
+            continue
+        cognigen_source_subjects.setdefault(r["source_url"], set()).add(
+            normalize_subject(r["subject"])
+        )
+    cognigen_page_thread_keys = {
+        source_url
+        for source_url, subjects in cognigen_source_subjects.items()
+        if "(no subject)" in subjects or len(subjects) > 1
+    }
     for r in rows:
         norm_subject = normalize_subject(r["subject"])
-        if r.get("source") in {"cognigencorp", "phor"} and r.get("source_url"):
+        if r.get("source") == "phor" and r.get("source_url"):
+            base_key = r.get("thread_key") or f"src:{r['source_url']}"
+        elif (
+            r.get("source") == "cognigencorp"
+            and r.get("source_url")
+            and r["source_url"] in cognigen_page_thread_keys
+        ):
             base_key = r.get("thread_key") or f"src:{r['source_url']}"
         elif norm_subject == "(no subject)":
             base_key = r.get("thread_key") or f"msg-{r['message_number'] or r['msg_seq']}"

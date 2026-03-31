@@ -120,6 +120,19 @@ def _extract_mail_archive_fragment(node: Tag) -> str:
     """Extract message text while preserving paragraphs and preformatted blocks."""
     parts: list[str] = []
     flowed_lines: list[str] = []
+    block_tags = {
+        "div",
+        "table",
+        "tbody",
+        "thead",
+        "tfoot",
+        "tr",
+        "td",
+        "p",
+        "ul",
+        "ol",
+        "li",
+    }
 
     def flush_flowed() -> None:
         if not flowed_lines:
@@ -140,6 +153,10 @@ def _extract_mail_archive_fragment(node: Tag) -> str:
         if not isinstance(child, Tag):
             continue
 
+        if child.name == "br":
+            flowed_lines.append("\n")
+            continue
+
         if child.name == "tt":
             flowed_lines.append(child.get_text(" ", strip=False))
             continue
@@ -156,6 +173,12 @@ def _extract_mail_archive_fragment(node: Tag) -> str:
             block = _extract_mail_archive_fragment(child)
             if block:
                 parts.append(_quote_mail_archive_block(block))
+            continue
+
+        if child.name in block_tags:
+            block = _extract_mail_archive_fragment(child)
+            if block:
+                parts.append(block)
             continue
 
         block = _normalize_mail_archive_text(child.get_text(" ", strip=False))
