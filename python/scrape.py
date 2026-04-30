@@ -4,8 +4,13 @@ Scrape NMusers message pages from mail-archive.com.
 Downloads raw HTML files with polite async concurrency.
 Resumes gracefully — skips already-downloaded files.
 
+By default the scraper starts at the message number immediately after
+the highest one already in data/messages.parquet, so daily runs only
+fetch the few new messages. Pass --start 0 for a full re-scrape.
+
 Usage:
-    python python/scrape.py                    # Full archive
+    python python/scrape.py                    # Incremental from last parquet
+    python python/scrape.py --start 0          # Full archive
     python python/scrape.py --start 0 --end 9  # First 10 messages
     python python/scrape.py --workers 3         # 3 concurrent requests
 """
@@ -16,6 +21,7 @@ import logging
 from pathlib import Path
 
 import httpx
+import polars as pl
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.mail-archive.com/nmusers@globomaxnm.com"
@@ -152,16 +158,50 @@ async def scrape(
     return results
 
 
+def resolve_start_id(parquet_path: Path) -> int:
+    """Return the next message ID to scrape based on the existing parquet.
+
+    Falls back to 0 (full archive) when no parquet is available.
+    """
+    if not parquet_path.exists():
+        log.info(f"No existing parquet at {parquet_path}, starting from msg00000")
+        return 0
+    max_num = pl.read_parquet(parquet_path, columns=["message_number"])["message_number"].max()
+    if max_num is None:
+        log.info(f"{parquet_path} is empty, starting from msg00000")
+        return 0
+    next_id = int(max_num) + 1
+    log.info(f"Existing parquet ends at msg{int(max_num):05d}, resuming at msg{next_id:05d}")
+    return next_id
+
+
 def main():
     parser = argparse.ArgumentParser(description="Scrape NMusers archive")
-    parser.add_argument("--start", type=int, default=0, help="First message ID")
+    parser.add_argument(
+        "--start",
+        type=int,
+        default=None,
+        help="First message ID (default: derived from --parquet, or 0 if absent)",
+    )
     parser.add_argument("--end", type=int, default=None, help="Last message ID (auto-discovered if omitted)")
     parser.add_argument("--output", type=str, default="data/raw", help="Output directory for HTML files")
+    parser.add_argument(
+        "--parquet",
+        type=str,
+        default="data/messages.parquet",
+        help="Existing parquet used to derive --start when not given",
+    )
     parser.add_argument("--workers", type=int, default=5, help="Max concurrent requests")
     args = parser.parse_args()
 
+    start_id = args.start if args.start is not None else resolve_start_id(Path(args.parquet))
     end_id = args.end if args.end is not None else discover_max_message_id()
-    asyncio.run(scrape(args.start, end_id, Path(args.output), args.workers))
+
+    if start_id > end_id:
+        log.info(f"Nothing to scrape: start={start_id} > end={end_id}")
+        return
+
+    asyncio.run(scrape(start_id, end_id, Path(args.output), args.workers))
 
 
 if __name__ == "__main__":

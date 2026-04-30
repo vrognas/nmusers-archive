@@ -15,7 +15,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -24,21 +24,14 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Restore cached raw HTML
-        uses: actions/cache@v4
-        with:
-          path: data/raw/
-          key: raw-html-${{ github.run_id }}
-          restore-keys: raw-html-
-
       - name: Install dependencies
         run: uv sync
 
       - name: Scrape new messages
-        run: uv run python python/scrape.py --workers 2
+        run: uv run python python/scrape.py
 
-      - name: Parse messages
-        run: uv run python python/parse.py
+      - name: Parse new messages
+        run: uv run python python/parse.py --incremental
 
       - name: Merge and deduplicate
         run: uv run python python/merge.py

@@ -293,6 +293,15 @@ def parse_message(filepath: Path) -> dict | None:
     # NOTE: link rel="prev" is chronological navigation, NOT threading.
     in_reply_to_number = _extract_thread_parent(soup)
 
+    # Real mail-archive messages always have a subject AND an author
+    # (those selectors are populated by the templating engine). If both
+    # are missing the page is either an error page, a layout we don't
+    # recognize, or a totally broken HTML — return None so the caller's
+    # all-failed detector can refuse to write garbage rows.
+    if not subject and not from_name:
+        log.warning(f"{filepath.name}: no subject or author found, skipping")
+        return None
+
     # Content classification
     category = classify_subject(subject)
 
@@ -333,11 +342,28 @@ def reconstruct_threads(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(pl.Series("thread_id", thread_ids))
 
 
-def parse_all(input_dir: Path) -> pl.DataFrame:
-    """Parse all HTML files in a directory into a Polars DataFrame."""
-    html_files = sorted(input_dir.glob("msg*.html"), key=lambda p: int(p.stem[3:]))
+def parse_all(input_dir: Path, skip_numbers: set[int] | None = None) -> pl.DataFrame:
+    """Parse HTML files in a directory into a Polars DataFrame.
 
-    if not html_files:
+    When skip_numbers is provided (incremental mode), files for those
+    message numbers are not re-parsed and an empty input directory is
+    treated as "nothing to do" rather than an error. The returned frame
+    contains only newly parsed rows (without thread_id) — callers in
+    incremental mode are expected to concat with the existing parquet
+    and re-run reconstruct_threads over the union.
+    """
+    if input_dir.exists():
+        html_files = sorted(input_dir.glob("msg*.html"), key=lambda p: int(p.stem[3:]))
+    else:
+        html_files = []
+
+    if skip_numbers is not None:
+        before = len(html_files)
+        html_files = [f for f in html_files if int(f.stem[3:]) not in skip_numbers]
+        log.info(f"Incremental: {before - len(html_files)} already parsed, {len(html_files)} new")
+        if not html_files:
+            return pl.DataFrame()
+    elif not html_files:
         raise FileNotFoundError(f"No msg*.html files found in {input_dir}")
 
     log.info(f"Parsing {len(html_files)} messages...")
@@ -353,8 +379,17 @@ def parse_all(input_dir: Path) -> pl.DataFrame:
 
     log.info(f"Parsed {len(records)} messages ({failed} failed)")
 
+    # Refuse to silently swallow a total parser breakage: if every file
+    # we attempted produced nothing, exit loudly so the workflow fails
+    # and the operator notices instead of "no new messages" hiding it.
+    if failed > 0 and not records:
+        raise RuntimeError(
+            f"All {failed} candidate messages failed to parse — refusing to write"
+        )
+
     df = pl.DataFrame(records)
-    df = reconstruct_threads(df)
+    if skip_numbers is None:
+        df = reconstruct_threads(df)
     return df
 
 
@@ -362,12 +397,35 @@ def main():
     parser = argparse.ArgumentParser(description="Parse NMusers HTML to Parquet")
     parser.add_argument("--input", type=str, default="data/raw", help="Directory with HTML files")
     parser.add_argument("--output", type=str, default="data/messages.parquet", help="Output Parquet path")
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Parse only files not yet in --output, then append and re-run thread reconstruction",
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input)
     output_path = Path(args.output)
 
-    df = parse_all(input_dir)
+    if args.incremental and output_path.exists():
+        existing = pl.read_parquet(output_path)
+        existing_numbers = set(existing["message_number"].to_list())
+        log.info(f"Loaded {len(existing)} existing rows from {output_path}")
+
+        new_df = parse_all(input_dir, skip_numbers=existing_numbers)
+        if new_df.is_empty():
+            log.info("No new messages — parquet unchanged")
+            return
+
+        # Concat (drop old thread_id so the recomputed column lines up),
+        # dedup by message_number trusting it as the primary key, then
+        # re-run thread reconstruction over the union so new replies can
+        # attach to existing threads.
+        df = pl.concat([existing.drop("thread_id"), new_df], how="diagonal_relaxed")
+        df = df.unique(subset=["message_number"], keep="last").sort("message_number")
+        df = reconstruct_threads(df)
+    else:
+        df = parse_all(input_dir)
 
     # Summary stats
     categories = df.group_by("category").len().sort("len", descending=True)
